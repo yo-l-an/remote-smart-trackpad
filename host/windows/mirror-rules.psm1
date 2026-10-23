@@ -91,6 +91,36 @@ function Repair-MirrorText($facts) {
     return @{ text=$text; start=$start; end=$end }
 }
 
+<#
+Inline objects in Chromium rich text: an emoji image in Discord's message box, any inline element a Slate editor keeps
+uneditable. Chromium reports each on lines of its own, none of which the field shows: a line break, the
+embedded-object marker (U+FFFC), a line break, the image's alt text and a line break when it has one (":sweat_smile:"),
+then the editor's zero-width anchor and a line break. The phone gets one character per object instead, a dotted
+square, which its caret crosses in one step as the PC's does. Facts: text, start, end (the caret and selection in it).
+Answers text, start and end as the phone gets them, and rawAt: rawAt[i] is where the phone's position i stands in the
+reported text (null when the text holds no such object). A caret inside an object's lines stands after it.
+#>
+$inlineObject = '\n\uFFFC\n(?:[^\n\uFFFC]*\n)??\uFEFF\n'
+function Get-InlineObjectView($facts) {
+    $text = [string]$facts.text
+    $found = [regex]::Matches($text, $inlineObject)
+    if (-not $found.Count) { return @{ text=$text; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null } }
+    $view = New-Object System.Text.StringBuilder
+    $rawAt = New-Object 'System.Collections.Generic.List[int]'
+    $from = 0
+    foreach ($object in $found) {
+        for ($index = $from; $index -lt $object.Index; $index++) { $rawAt.Add($index); [void]$view.Append($text[$index]) }
+        $rawAt.Add($object.Index); [void]$view.Append([char]0x2B1A)
+        $from = $object.Index + $object.Length
+    }
+    for ($index = $from; $index -lt $text.Length; $index++) { $rawAt.Add($index); [void]$view.Append($text[$index]) }
+    $rawAt.Add($text.Length)
+    $at = $rawAt.ToArray()
+    # The first position of the view at or after a reported one.
+    $position = { param([int]$raw) for ($index = 0; $index -lt $at.Length; $index++) { if ($at[$index] -ge $raw) { return $index } }; return $at.Length - 1 }
+    return @{ text=$view.ToString(); start=(& $position $facts.start); end=(& $position $facts.end); rawAt=$at }
+}
+
 # Inline completion (an address bar, a search box): the field shows what was typed followed by a suggestion it
 # selected, so typing on replaces it. That is the typing applied, not a different text.
 function Test-InlineCompletion($updated, [string]$next, [int]$landed) {
@@ -136,4 +166,4 @@ function Get-FieldKind($facts) {
     return 'text'
 }
 
-Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Test-InlineCompletion, Get-EditOutcome
+Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Get-InlineObjectView, Test-InlineCompletion, Get-EditOutcome

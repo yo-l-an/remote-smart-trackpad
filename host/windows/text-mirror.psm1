@@ -159,6 +159,13 @@ function Read-MirrorOnce {
     $phantomBreak = $framework -eq 'Chrome' -and -not $resolved.native -and $text.EndsWith("`n") -and (Test-PhantomBreak $element)
     $repaired = Repair-MirrorText @{ framework=$framework; className=$element.Current.ClassName; native=$resolved.native; text=$text; start=$start; end=$end; phantomBreak=$phantomBreak }
     $text = $repaired.text; $start = $repaired.start; $end = $repaired.end
+    # Inline objects (Discord's emoji images) as one character each; positions on the phone go back through rawAt.
+    $objects = $null
+    if ($framework -eq 'Chrome' -and -not $resolved.native) {
+        $view = Get-InlineObjectView @{ text=$text; start=$start; end=$end }
+        if ($null -ne $view.rawAt) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text } }
+        $text = $view.text; $start = $view.start; $end = $view.end
+    }
     # Chromium can misreport the caret on an empty line; after our own edit the caret position is known instead.
     $believed = if ($null -ne $script:mirror -and $element.Equals($script:mirror.element)) { $script:mirror.believed } else { $null }
     if ($null -ne $believed) {
@@ -172,6 +179,7 @@ function Read-MirrorOnce {
         $script:mirror.revision++
         $script:mirror.text=$text; $script:mirror.start=$start; $script:mirror.end=$end
     }
+    $script:mirror.objects = $objects
     # singleLine: the field cannot hold a line break (an <input>, a one-line edit box): the phone's Enter key sends
     # Enter there instead of a new line.
     return @{ field=$field; readable=$true; session=$script:mirror.id; revision=$script:mirror.revision; text=$text; selectionStart=$start; selectionEnd=$end; singleLine=($resolved.singleLine -eq $true); kind=(Get-FieldKind $script:resolvedField.facts) }
@@ -192,13 +200,19 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
     if (-not $element.Equals($script:mirror.element)) { throw 'PC focus changed' }
     $pattern = $element.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern)
     $range = $pattern.DocumentRange.Clone()
-    $elements = [System.Globalization.StringInfo]::ParseCombiningCharacters($text)
-    $from = Get-ElementIndex $elements $start $text.Length
-    $to = Get-ElementIndex $elements $end $text.Length
+    # With inline objects, the phone's positions stand in the reported text through rawAt (Get-InlineObjectView).
+    $reported = $text; $rawStart = $start; $rawEnd = $end
+    $objects = $script:mirror.objects
+    if ($null -ne $objects -and $objects.text -ceq $text) {
+        $reported = $objects.raw; $rawStart = $objects.rawAt[$start]; $rawEnd = $objects.rawAt[$end]
+    }
+    $elements = [System.Globalization.StringInfo]::ParseCombiningCharacters($reported)
+    $from = Get-ElementIndex $elements $rawStart $reported.Length
+    $to = Get-ElementIndex $elements $rawEnd $reported.Length
     $range.MoveEndpointByRange([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, $range, [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
     if ($range.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.Text.TextUnit]::Character, $to) -ne $to) { throw 'PC text range cannot be selected' }
     if ($range.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [System.Windows.Automation.Text.TextUnit]::Character, $from) -ne $from) { throw 'PC text range cannot be selected' }
-    if ((Normalize-MirrorText ($range.GetText(262145))) -cne $text.Substring($start, $end - $start)) { throw 'PC text range differs' }
+    if ((Normalize-MirrorText ($range.GetText(262145))) -cne $reported.Substring($rawStart, $rawEnd - $rawStart)) { throw 'PC text range differs' }
     # A caret at the start of a line is ambiguous in Chromium: it can resolve to the end of the previous line. Place
     # it instead right after the last real character before the line breaks, then step over them with Right.
     if ($start -eq $end -and $start -gt 0 -and $text[$start - 1] -eq "`n" -and -not (Test-ModifierHeld)) {

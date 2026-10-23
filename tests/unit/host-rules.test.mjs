@@ -269,6 +269,30 @@ test('USB dongle: characters typed as keys of the layout', { skip: !windows }, a
     assert.equal(await typing('a', true), `t ${usage} ${modifiers ^ 2}`);
 });
 
+test('inline objects: one character each, the caret across them in one step', { skip: !windows }, async () => {
+    const view = async (text, start = text.length, end = start) => {
+        const { rawAt, ...result } = await ask('Get-InlineObjectView', { text, start, end });
+        return { ...result, rawAt };
+    };
+    // Read from Discord's message box: the emoji image's alt text sits on a line of its own.
+    const discord = await view('Test \n￼\n:sweat_smile:\n﻿\n﻿');
+    assert.equal(discord.text, 'Test ⬚﻿');
+    assert.deepEqual([discord.start, discord.end], [7, 7]);
+    assert.deepEqual(discord.rawAt, [0, 1, 2, 3, 4, 5, 24, 25]);
+    // Read from Chrome (tests/fixtures/placeholders.html, slate-emoji-*): in the middle of a line, at a line start.
+    assert.equal((await view('a \n￼\n﻿\n b')).text, 'a ⬚ b');
+    assert.equal((await view('a\n﻿\n￼\n﻿\n b')).text, 'a\n﻿⬚ b');
+    // A caret inside an object's lines stands after it; one before it stays before.
+    const middle = 'a \n￼\n﻿\n b';
+    assert.deepEqual(
+        [await view(middle, 4), await view(middle, 2)].map(({ start }) => start),
+        [3, 2]
+    );
+    // Text without such an object is left as it is.
+    const plain = await view('a\n￼\nb', 1);
+    assert.deepEqual([plain.text, plain.start, plain.rawAt], ['a\n￼\nb', 1, null]);
+});
+
 test('field verdicts recorded from real browsers stay the same', { skip: !windows }, async () => {
     let recorded;
     try {
