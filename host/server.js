@@ -3,7 +3,7 @@ import https from 'node:https';
 import net from 'node:net';
 import { randomInt, timingSafeEqual } from 'node:crypto';
 import { readFile, mkdir } from 'node:fs/promises';
-import { watch } from 'node:fs';
+import { existsSync, watch } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
 import path from 'node:path';
@@ -36,6 +36,16 @@ function refreshPairingCode() {
 }
 const pairingAttempts = new Map();
 let stopping = false;
+// The optional USB dongle (dongle/README.md): offered when dongle/.env sets DONGLE_ENABLED=true, then used unless the
+// tray menu turned it off (it writes dongleOffFile and tells this server on stdin). Without it, no search runs.
+const dongleOffFile = path.join(dataDirectory, 'dongle-off');
+const dongleOffered = /^\s*DONGLE_ENABLED\s*=\s*true\s*$/im.test(
+    await readFile(path.join(root, 'dongle', '.env'), 'utf8').catch(() => '')
+);
+let dongleOn = dongleOffered && !existsSync(dongleOffFile);
+function applyDongle() {
+    if (dongleOffered) command('dongle', { enabled: dongleOn }).catch((error) => console.error(error.message));
+}
 let bridge,
     bridgeStarted = 0,
     bridgeDelay = 1000;
@@ -50,6 +60,7 @@ function launchBridge() {
         setTimeout(() => {
             if (stopping) return;
             launchBridge();
+            applyDongle();
             transport.notify('ready');
         }, bridgeDelay);
         bridgeDelay = Math.min(bridgeDelay * 2, 30_000);
@@ -58,6 +69,7 @@ function launchBridge() {
 launchBridge();
 // Always the current bridge: a crashed one is replaced (launchBridge).
 const command = (action, data) => bridge.command(action, data);
+applyDongle();
 
 function authorized(request) {
     const token =
@@ -395,6 +407,10 @@ async function shutdown() {
 }
 createInterface({ input: process.stdin }).on('line', (line) => {
     if (line === 'shutdown') shutdown();
+    if (line === 'dongle on' || line === 'dongle off') {
+        dongleOn = line === 'dongle on';
+        applyDongle();
+    }
 });
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

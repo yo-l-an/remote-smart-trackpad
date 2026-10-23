@@ -79,8 +79,8 @@ _Bravo, you can now use your computer on your couch._
 
 ## Known current limitations
 
-- **Windows secure screens are out of reach.** The sign-in and lock screens and UAC prompts run on Windows' secure desktop, which no app in your session can type into or read, on purpose. Use the PC's own keyboard there. _I'm currently looking into a way to make the phone's keyboard work on the secure desktop, but it is not trivial._
-- **Apps run as administrator** ignore input from the remote: Windows does not let a normal app drive an elevated one.
+- **Windows secure screens are out of reach.** The sign-in and lock screens and UAC prompts run on Windows' secure desktop, which no app in your session can type into or read, on purpose. Use the PC's own keyboard there, or the optional [USB dongle](./dongle/README.md), which reaches the lock screen and UAC prompts (not the sign-in screen after a restart).
+- **Apps run as administrator** ignore input from the remote: Windows does not let a normal app drive an elevated one. The [USB dongle](./dongle/README.md) drives them.
 - **Some fields are typed blind, not mirrored**: VS Code's editor and terminal, other editors that draw their own text, password fields, and a few providers that do not report their selection (WPF's RichTextBox). Typing still works; the phone just cannot show the PC's text.
 - **Firefox search boxes** report themselves as read-only: they are typed blind, with the standard keyboard.
 - **Field types** come from an `<input>`'s type or a classic edit box's digits-only style. A web field that only asks for a keyboard through `inputmode` gets the standard one. Terminals are recognised in VS Code and the Windows console; Windows Terminal, Git Bash (mintty), PuTTY and ConEmu are recognised by name.
@@ -102,7 +102,7 @@ _Bravo, you can now use your computer on your couch._
 3. Right-click the tray icon, then select **Connect a device**. On the phone, scan the QR code, then enter your name and the six-digit pairing code. A code expires after ten minutes. To get a new code, select **New code** on the setup page of the PC.
 4. To install the remote as an app, open the trust page once. Its QR code is on the setup page. Then select **Install as app** in the options menu.
 
-The tray menu contains **Connect a device**, **Show console**, **Start with Windows**, **Restart server** and **Stop server**. When you run the launcher again, it restarts the server.
+The tray menu contains **Connect a device**, **Show console**, **Start with Windows**, **Restart server** and **Stop server**. When the optional [USB dongle](./dongle/README.md) is turned on in `dongle/.env`, it also contains **Use the USB dongle**. When you run the launcher again, it restarts the server.
 
 The first run of the launcher enables **Start with Windows**. Later runs keep the setting that you select. At sign-in, Windows starts `.data/RemoteSmartTrackpad.exe` directly, without a console window. Keep the project and Node.js in their current folders. If you move one of them, run the launcher again, then disable and enable **Start with Windows**. [Manage Auto Start.cmd](./Manage%20Auto%20Start.cmd) also accepts the arguments `enable`, `disable` and `status`.
 
@@ -111,6 +111,19 @@ For development, run `npm ci`, then `npm start`. This command runs the server in
 ## Paired devices
 
 [Manage Tokens.cmd](./Manage%20Tokens.cmd) lists the paired phones while the server runs. When you revoke a phone, the server closes its connection and releases its input. That phone must then pair again. `.data/tokens.json` stores the hash of each token, the name of each phone and the date of its first connection. The raw token stays on the phone.
+
+## Optional USB dongle
+
+Windows keeps the remote off its secure desktop (the lock screen, UAC prompts) and off apps run as administrator. A [LilyGO T-Dongle-S3](https://github.com/Xinyuan-LilyGO/T-Dongle-S3) plugged into the PC goes past that: Windows sees it as a real keyboard and mouse. The phone needs no change. The server sends the dongle only the input that Windows rejects; all other input goes through Windows as before.
+
+The feature is off by default, and the server then does not look for a dongle. To turn it on:
+
+1. Flash the dongle's firmware: see [dongle/README.md](./dongle/README.md).
+2. Copy `dongle/.env.example` to `dongle/.env` (Git ignores it), and set `DONGLE_ENABLED=true`.
+3. Run the launcher again, so that the server and the tray menu read the file.
+4. Plug the dongle into the PC. Its LED turns green, and the console shows `USB dongle: connected on COMx`.
+
+The tray menu then shows **Use the USB dongle**. Clear it to stop using the dongle without unplugging it. The [dongle's README](./dongle/README.md) gives its limits: the server must run (no sign-in screen after a restart), Windows' pointer speed applies to its moves, and text goes through the PC's keyboard layout.
 
 ## Network and HTTPS
 
@@ -147,6 +160,7 @@ Each phone trusts the certificate authority once, through `http://<pc>:8765/trus
 | `tests/checks/`     | Browser, typing, placeholder, mirror and tray checks against real apps               |
 | `tests/fixtures/`   | Pages and recorded facts that the tests and checks use                               |
 | `docs/`             | Decisions (`adr/`) and the screenshots of this README                                |
+| `dongle/`           | Firmware of the optional USB dongle (PlatformIO), see its README                     |
 
 [CONTEXT.md](CONTEXT.md) defines the domain words (PC field, mirror, blind typing, echo…).
 

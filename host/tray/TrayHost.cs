@@ -84,6 +84,14 @@ internal sealed class HostContext : ApplicationContext {
         var administrator = new ToolStripMenuItem("Run as administrator (restart server)") { CheckOnClick = false, Checked = elevated };
         administrator.Click += delegate { SwitchMode(!elevated); };
         menu.Items.Add(administrator);
+        // The optional USB dongle (dongle/README.md): offered only when dongle/.env sets DONGLE_ENABLED=true.
+        string dongleSettings = Path.Combine(root, "dongle", ".env");
+        if (File.Exists(dongleSettings) && System.Text.RegularExpressions.Regex.IsMatch(File.ReadAllText(dongleSettings), @"^\s*DONGLE_ENABLED\s*=\s*true\s*$", System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase)) {
+            string dongleOff = Path.Combine(data, "dongle-off");
+            var dongle = new ToolStripMenuItem("Use the USB dongle") { CheckOnClick = false, Checked = !File.Exists(dongleOff) };
+            dongle.Click += delegate { SetDongle(!dongle.Checked, dongle, dongleOff); };
+            menu.Items.Add(dongle);
+        }
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Restart server", null, delegate { RestartServer(); });
         menu.Items.Add("Stop server", null, delegate { ExitThread(); });
@@ -163,6 +171,16 @@ internal sealed class HostContext : ApplicationContext {
         }
         if (console != null) console.Dispose();
         console = Process.Start(new ProcessStartInfo(node, "\"" + Path.Combine(root, "host", "show-console.js") + "\" \"" + logPath + "\"") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = false });
+    }
+    // Remembered for the next servers (dongleOff), and applied to the running one at once.
+    private void SetDongle(bool enabled, ToolStripMenuItem item, string dongleOff) {
+        try {
+            if (enabled) File.Delete(dongleOff);
+            else File.WriteAllText(dongleOff, "The USB dongle is turned off in the tray menu.");
+        } catch (Exception error) { MessageBox.Show(error.Message, StartupName); return; }
+        item.Checked = enabled;
+        Append(enabled ? "USB dongle: turned on in the tray menu" : "USB dongle: turned off in the tray menu");
+        try { if (server != null && !server.HasExited) { server.StandardInput.WriteLine(enabled ? "dongle on" : "dongle off"); server.StandardInput.Flush(); } } catch (IOException) { }
     }
     private void SetStartup(bool enabled) {
         using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
