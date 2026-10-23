@@ -443,6 +443,11 @@ second</textarea>
                 </div>
             </div>
         </section>
+        <!-- prettier-ignore -->
+        <section data-case="slate-emoji-pair" data-kind="content" data-expected="a ⬚ ⬚ b">
+            <h2>Slate inline emoji images separated by a space (pre-wrap, as Slate sets it)</h2>
+            <div data-field contenteditable style="white-space: pre-wrap" data-slate-editor="true" role="textbox"><div data-slate-node="element"><span data-slate-node="text"><span data-slate-leaf="true"><span data-slate-string="true">a </span></span></span><spandata-slate-node="element"data-slate-void="true"data-slate-inline="true"contenteditable="false"><span class="emoji-container"><img class="emoji"alt=":a:"draggable="false"width="22"height="22"src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23fc0'/%3E%3C/svg%3E" /></span><span data-slate-spacer="true" style="position: absolute; height: 0; color: transparent"><span data-slate-node="text"><span data-slate-leaf="true"><span data-slate-zero-width="z" data-slate-length="0">&#xFEFF;</span></span></span></span></span><span data-slate-node="text"><span data-slate-leaf="true"><span data-slate-string="true"> </span></span></span><spandata-slate-node="element"data-slate-void="true"data-slate-inline="true"contenteditable="false"><span class="emoji-container"><img class="emoji"alt=":b:"draggable="false"width="22"height="22"src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23fc0'/%3E%3C/svg%3E" /></span><span data-slate-spacer="true" style="position: absolute; height: 0; color: transparent"><span data-slate-node="text"><span data-slate-leaf="true"><span data-slate-zero-width="z" data-slate-length="0">&#xFEFF;</span></span></span></span></span><span data-slate-node="text"><span data-slate-leaf="true"><span data-slate-string="true"> b</span></span></span></div></div>
+        </section>
         <section data-case="rtl-content" data-kind="content" data-expected="שלום עולם">
             <h2>right-to-left text</h2>
             <div data-field contenteditable dir="rtl" class="css-empty" data-placeholder="כתוב הודעה">שלום עולם</div>

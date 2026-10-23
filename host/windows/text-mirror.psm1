@@ -159,11 +159,12 @@ function Read-MirrorOnce {
     $phantomBreak = $framework -eq 'Chrome' -and -not $resolved.native -and $text.EndsWith("`n") -and (Test-PhantomBreak $element)
     $repaired = Repair-MirrorText @{ framework=$framework; className=$element.Current.ClassName; native=$resolved.native; text=$text; start=$start; end=$end; phantomBreak=$phantomBreak }
     $text = $repaired.text; $start = $repaired.start; $end = $repaired.end
-    # Inline objects (Discord's emoji images) as one character each; positions on the phone go back through rawAt.
+    # Inline objects (Discord's emoji images) by their names, one character each for the caret; positions on the
+    # phone go back through rawAt, and the phone gets where each object stands.
     $objects = $null
     if ($framework -eq 'Chrome' -and -not $resolved.native) {
         $view = Get-InlineObjectView @{ text=$text; start=$start; end=$end }
-        if ($null -ne $view.rawAt) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text } }
+        if ($null -ne $view.rawAt) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$view.objects } }
         $text = $view.text; $start = $view.start; $end = $view.end
     }
     # Chromium can misreport the caret on an empty line; after our own edit the caret position is known instead.
@@ -182,7 +183,9 @@ function Read-MirrorOnce {
     $script:mirror.objects = $objects
     # singleLine: the field cannot hold a line break (an <input>, a one-line edit box): the phone's Enter key sends
     # Enter there instead of a new line.
-    return @{ field=$field; readable=$true; session=$script:mirror.id; revision=$script:mirror.revision; text=$text; selectionStart=$start; selectionEnd=$end; singleLine=($resolved.singleLine -eq $true); kind=(Get-FieldKind $script:resolvedField.facts) }
+    $read = @{ field=$field; readable=$true; session=$script:mirror.id; revision=$script:mirror.revision; text=$text; selectionStart=$start; selectionEnd=$end; singleLine=($resolved.singleLine -eq $true); kind=(Get-FieldKind $script:resolvedField.facts) }
+    if ($null -ne $objects) { $read.objects = $objects.ranges }
+    return $read
 }
 
 # A read the phone already has (same session and revision) is answered as unchanged.
@@ -226,11 +229,12 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
 }
 
 # Backspace until exactly the erased text is gone, reading the field after each: in an emoji sequence (surrogates,
-# skin tones, joiners) apps erase one character or a part of it per Backspace, and .NET counts its parts apart.
-function Remove-BeforeCaret([string]$old, [int]$start, [int]$end, $session) {
+# skin tones, joiners) apps erase one character or a part of it per Backspace, and .NET counts its parts apart. An
+# inline object (an emoji's name) takes one Backspace (Get-CaretSteps).
+function Remove-BeforeCaret([string]$old, [int]$start, [int]$end, $session, $objects = @()) {
     $erased = $old.Substring($start, $end - $start)
     if ($erased -notmatch '[\uD800-\uDFFF\u200D\uFE0E\uFE0F\u20E3]') {
-        $removed = (New-Object System.Globalization.StringInfo $erased).LengthInTextElements
+        $removed = Get-CaretSteps @{ text=$old; start=$start; end=$end; objects=$objects }
         for ($index = 0; $index -lt $removed; $index++) { Tap-Key 'Backspace' }
         return
     }
@@ -273,9 +277,19 @@ function Edit-Mirror($data) {
     $old = $snapshot.text
     $start=[int]$data.start; $end=[int]$data.end; $insert=[string]$data.text
     if ($start -lt 0 -or $end -lt $start -or $end -gt $old.Length -or $insert.Length -gt 16384) { throw 'Invalid text operation' }
+    $selectionStart=[int]$data.selectionStart; $selectionEnd=[int]$data.selectionEnd
+    # An edit cutting into an inline object (Backspace on the end of an emoji's name) takes the whole object; the
+    # caret then lands after what was typed.
+    # Assigned as is: an if statement's output would unroll the list (one object would read as its two numbers).
+    $objects = $null
+    if ($null -ne $script:mirror.objects -and $script:mirror.objects.text -ceq $old) { $objects = $script:mirror.objects.ranges }
+    $whole = Expand-ObjectEdit @{ start=$start; end=$end; objects=$objects }
+    if ($whole.start -ne $start -or $whole.end -ne $end) {
+        $start = $whole.start; $end = $whole.end
+        $selectionStart = $selectionEnd = $start + $insert.Length
+    }
     $next = $old.Substring(0,$start) + $insert + $old.Substring($end)
     if ($next.Length -gt 262144) { throw 'Mirror field limit exceeded' }
-    $selectionStart=[int]$data.selectionStart; $selectionEnd=[int]$data.selectionEnd
     if ($selectionStart -lt 0 -or $selectionEnd -lt $selectionStart -or $selectionEnd -gt $next.Length) { throw 'Invalid selection' }
     $changed = $old -cne $next
     $landed = $start + $insert.Length
@@ -287,7 +301,7 @@ function Edit-Mirror($data) {
         if (-not $atCaret -and -not $overSelection) { Select-MirrorRange $start $end $old }
         if (-not ([System.Windows.Automation.AutomationElement]::FocusedElement).Equals($script:mirror.element)) { return @{ accepted=$false; snapshot=(Read-Mirror) } }
         if ($atCaret) {
-            Remove-BeforeCaret $old $start $end $snapshot.session
+            Remove-BeforeCaret $old $start $end $snapshot.session $objects
             if ($insert.Length) { Insert-Text $insert }
         } elseif ($insert.Length) { Insert-Text $insert }
         elseif ($overSelection) { Tap-Key 'Backspace' }

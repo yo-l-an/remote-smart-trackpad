@@ -95,30 +95,66 @@ function Repair-MirrorText($facts) {
 Inline objects in Chromium rich text: an emoji image in Discord's message box, any inline element a Slate editor keeps
 uneditable. Chromium reports each on lines of its own, none of which the field shows: a line break, the
 embedded-object marker (U+FFFC), a line break, the image's alt text and a line break when it has one (":sweat_smile:"),
-then the editor's zero-width anchor and a line break. The phone gets one character per object instead, a dotted
-square, which its caret crosses in one step as the PC's does. Facts: text, start, end (the caret and selection in it).
-Answers text, start and end as the phone gets them, and rawAt: rawAt[i] is where the phone's position i stands in the
-reported text (null when the text holds no such object). A caret inside an object's lines stands after it.
+then the editor's zero-width anchor and a line break. The phone gets each object as its alt text (a dotted square
+without one), which counts as one character, as on the PC: its caret stops only at the object's edges. Facts: text,
+start, end (the caret and selection in it). Answers text, start and end as the phone gets them; objects, the
+[start, end] of each object in that text; and rawAt: rawAt[i] is where the phone's position i stands in the reported
+text, an object's start for a position inside it (null when the text holds no such object). A caret inside an
+object's lines stands after it.
 #>
-$inlineObject = '\n\uFFFC\n(?:[^\n\uFFFC]*\n)??\uFEFF\n'
+# The line break after the anchor shows only when nothing follows on its line (a space between two emojis does); an
+# object right after another shares that one's break instead of opening its own.
+$inlineObject = '(?:\n|(?<=\uFEFF\n))\uFFFC\n(?:([^\n\uFFFC]*)\n)??\uFEFF\n?'
 function Get-InlineObjectView($facts) {
     $text = [string]$facts.text
     $found = [regex]::Matches($text, $inlineObject)
-    if (-not $found.Count) { return @{ text=$text; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null } }
+    if (-not $found.Count) { return @{ text=$text; start=[int]$facts.start; end=[int]$facts.end; objects=@(); rawAt=$null } }
     $view = New-Object System.Text.StringBuilder
     $rawAt = New-Object 'System.Collections.Generic.List[int]'
+    $objects = New-Object 'System.Collections.Generic.List[object]'
     $from = 0
     foreach ($object in $found) {
         for ($index = $from; $index -lt $object.Index; $index++) { $rawAt.Add($index); [void]$view.Append($text[$index]) }
-        $rawAt.Add($object.Index); [void]$view.Append([char]0x2B1A)
+        $name = $object.Groups[1].Value.Trim()
+        if (-not $name -or $name.Length -gt 64) { $name = [string][char]0x2B1A }
+        $objects.Add(@($view.Length, ($view.Length + $name.Length)))
+        foreach ($character in $name.ToCharArray()) { $rawAt.Add($object.Index); [void]$view.Append($character) }
         $from = $object.Index + $object.Length
     }
     for ($index = $from; $index -lt $text.Length; $index++) { $rawAt.Add($index); [void]$view.Append($text[$index]) }
     $rawAt.Add($text.Length)
     $at = $rawAt.ToArray()
-    # The first position of the view at or after a reported one.
+    # The first position of the view at or after a reported one: an object's start, or past it.
     $position = { param([int]$raw) for ($index = 0; $index -lt $at.Length; $index++) { if ($at[$index] -ge $raw) { return $index } }; return $at.Length - 1 }
-    return @{ text=$view.ToString(); start=(& $position $facts.start); end=(& $position $facts.end); rawAt=$at }
+    return @{ text=$view.ToString(); start=(& $position $facts.start); end=(& $position $facts.end); objects=$objects.ToArray(); rawAt=$at }
+}
+
+<#
+An edit from the phone that cuts into an inline object (Backspace on the end of an emoji's name) takes the whole
+object, as one key does on the PC. Facts: start, end, objects (from Get-InlineObjectView). Answers start and end.
+#>
+function Expand-ObjectEdit($facts) {
+    $start = [int]$facts.start; $end = [int]$facts.end
+    foreach ($object in @($facts.objects | Where-Object { $null -ne $_ })) {
+        if ($start -gt $object[0] -and $start -lt $object[1]) { $start = [int]$object[0] }
+        if ($end -gt $object[0] -and $end -lt $object[1]) { $end = [int]$object[1] }
+    }
+    return @{ start=$start; end=$end }
+}
+
+<#
+How many characters the PC's caret crosses over text[start..end] of the view: its text elements, each inline object
+counting one. Facts: text, start, end, objects.
+#>
+function Get-CaretSteps($facts) {
+    $text = [string]$facts.text; $start = [int]$facts.start; $end = [int]$facts.end
+    $steps = (New-Object System.Globalization.StringInfo $text.Substring($start, $end - $start)).LengthInTextElements
+    foreach ($object in @($facts.objects | Where-Object { $null -ne $_ })) {
+        if ($object[0] -ge $start -and $object[1] -le $end) {
+            $steps -= (New-Object System.Globalization.StringInfo $text.Substring($object[0], $object[1] - $object[0])).LengthInTextElements - 1
+        }
+    }
+    return $steps
 }
 
 # Inline completion (an address bar, a search box): the field shows what was typed followed by a suggestion it
@@ -166,4 +202,4 @@ function Get-FieldKind($facts) {
     return 'text'
 }
 
-Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Get-InlineObjectView, Test-InlineCompletion, Get-EditOutcome
+Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Get-InlineObjectView, Expand-ObjectEdit, Get-CaretSteps, Test-InlineCompletion, Get-EditOutcome

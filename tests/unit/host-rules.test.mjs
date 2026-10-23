@@ -269,28 +269,80 @@ test('USB dongle: characters typed as keys of the layout', { skip: !windows }, a
     assert.equal(await typing('a', true), `t ${usage} ${modifiers ^ 2}`);
 });
 
-test('inline objects: one character each, the caret across them in one step', { skip: !windows }, async () => {
-    const view = async (text, start = text.length, end = start) => {
-        const { rawAt, ...result } = await ask('Get-InlineObjectView', { text, start, end });
-        return { ...result, rawAt };
-    };
+test('inline objects: shown by their names, one caret step each', { skip: !windows }, async () => {
+    // The embedded-object marker, the editor's zero-width anchor, the dotted square shown without a name.
+    const [marker, anchor, square] = [0xfffc, 0xfeff, 0x2b1a].map((code) => String.fromCodePoint(code));
+    const view = (text, start = text.length, end = start) => ask('Get-InlineObjectView', { text, start, end });
     // Read from Discord's message box: the emoji image's alt text sits on a line of its own.
-    const discord = await view('Test \n￼\n:sweat_smile:\n﻿\n﻿');
-    assert.equal(discord.text, 'Test ⬚﻿');
-    assert.deepEqual([discord.start, discord.end], [7, 7]);
-    assert.deepEqual(discord.rawAt, [0, 1, 2, 3, 4, 5, 24, 25]);
-    // Read from Chrome (tests/fixtures/placeholders.html, slate-emoji-*): in the middle of a line, at a line start.
-    assert.equal((await view('a \n￼\n﻿\n b')).text, 'a ⬚ b');
-    assert.equal((await view('a\n﻿\n￼\n﻿\n b')).text, 'a\n﻿⬚ b');
-    // A caret inside an object's lines stands after it; one before it stays before.
-    const middle = 'a \n￼\n﻿\n b';
-    assert.deepEqual(
-        [await view(middle, 4), await view(middle, 2)].map(({ start }) => start),
-        [3, 2]
+    const discord = await view(`Test \n${marker}\n:sweat_smile:\n${anchor}\n${anchor}`);
+    assert.equal(discord.text, `Test :sweat_smile:${anchor}`);
+    assert.deepEqual(discord.objects, [[5, 18]]);
+    assert.deepEqual([discord.start, discord.end], [19, 19]);
+    assert.deepEqual(discord.rawAt.slice(4, 8), [4, 5, 5, 5]);
+    assert.deepEqual(discord.rawAt.slice(-3), [5, 24, 25]);
+    // Read from Chrome (tests/fixtures/placeholders.html, slate-emoji-*): no alt text, in the middle of a line and
+    // at a line start.
+    assert.equal((await view(`a \n${marker}\n${anchor}\n b`)).text, `a ${square} b`);
+    assert.equal((await view(`a\n${anchor}\n${marker}\n${anchor}\n b`)).text, `a\n${anchor}${square} b`);
+    // Two emojis with a space between (Slate keeps it, pre-wrap): the anchor's line goes on with the space. Without
+    // it, the second object shares the first one's line break.
+    assert.equal(
+        (
+            await view(`a 
+${marker}
+${anchor} 
+${marker}
+${anchor}
+ b`)
+        ).text,
+        `a ${square} ${square} b`
     );
+    assert.equal(
+        (
+            await view(`a 
+${marker}
+${anchor}
+${marker}
+${anchor}
+ b`)
+        ).text,
+        `a ${square}${square} b`
+    );
+    const pair = await view(`
+${marker}
+:a:
+${anchor} 
+${marker}
+:b:
+${anchor}
+${anchor}`);
+    assert.deepEqual(
+        [pair.text, pair.objects],
+        [
+            `:a: :b:${anchor}`,
+            [
+                [0, 3],
+                [4, 7],
+            ],
+        ]
+    );
+    // A caret inside an object's lines stands after it; one before it stays before.
+    const middle = `a \n${marker}\n${anchor}\n b`;
+    assert.deepEqual([(await view(middle, 4)).start, (await view(middle, 2)).start], [3, 2]);
     // Text without such an object is left as it is.
-    const plain = await view('a\n￼\nb', 1);
-    assert.deepEqual([plain.text, plain.start, plain.rawAt], ['a\n￼\nb', 1, null]);
+    const plain = await view(`a\n${marker}\nb`, 1);
+    assert.deepEqual([plain.text, plain.start, plain.rawAt], [`a\n${marker}\nb`, 1, null]);
+
+    // Backspace on the end of a name takes the whole object, in one key press on the PC.
+    const objects = discord.objects;
+    assert.deepEqual(await ask('Expand-ObjectEdit', { start: 17, end: 18, objects }), { start: 5, end: 18 });
+    assert.deepEqual(await ask('Expand-ObjectEdit', { start: 2, end: 4, objects }), { start: 2, end: 4 });
+    const text = discord.text;
+    assert.equal(await ask('Get-CaretSteps', { text, start: 5, end: 18, objects }), 1);
+    assert.equal(await ask('Get-CaretSteps', { text, start: 2, end: 18, objects }), 4);
+    // A field without objects (most of them) has no list at all: every edit goes through as is.
+    assert.deepEqual(await ask('Expand-ObjectEdit', { start: 1, end: 2, objects: null }), { start: 1, end: 2 });
+    assert.equal(await ask('Get-CaretSteps', { text: 'abc', start: 0, end: 2, objects: null }), 2);
 });
 
 test('field verdicts recorded from real browsers stay the same', { skip: !windows }, async () => {

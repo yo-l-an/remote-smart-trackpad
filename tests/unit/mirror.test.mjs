@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMirror } from '../../web/logic/mirror.js';
+import { coverObjects, createMirror } from '../../web/logic/mirror.js';
 
 const snapshot = (text, session = 'field-a', revision = 0) => ({
     readable: true,
@@ -235,4 +235,37 @@ test('typing that reaches a field after it moved the focus on (a code box) follo
     await h.reply({ accepted: false, snapshot: snapshot('', 'box-3') });
     assert.equal(h.requests[0].data.session, 'box-3');
     assert.equal(h.requests[0].data.text, '2');
+});
+test('an inline object (an emoji name) is crossed in one step or selected whole, as on the PC', async () => {
+    const objects = [[5, 18]];
+    assert.deepEqual(coverObjects(objects, 9, 9), [5, 18]);
+    assert.deepEqual(coverObjects(objects, 2, 9), [2, 18]);
+    assert.deepEqual(coverObjects(objects, 9, 19), [5, 19]);
+    // At its edges the caret stays.
+    assert.deepEqual(coverObjects(objects, 5, 5), [5, 5]);
+    assert.deepEqual(coverObjects(objects, 18, 18), [18, 18]);
+    // The space-bar cursor steps in from an edge: it crosses the name, to the right or to the left.
+    assert.deepEqual(coverObjects(objects, 6, 6, [5, 5]), [18, 18]);
+    assert.deepEqual(coverObjects(objects, 17, 17, [18, 18]), [5, 5]);
+    // From the name selected, the cursor goes to the edge it moved toward.
+    assert.deepEqual(coverObjects(objects, 16, 16, [5, 18]), [18, 18]);
+    assert.deepEqual(coverObjects(objects, 6, 6, [5, 18]), [5, 5]);
+    // Sliding fast, the cursor lands anywhere inside: it still crosses, in the direction it goes.
+    assert.deepEqual(coverObjects(objects, 12, 12, [3, 3], true), [18, 18]);
+    assert.deepEqual(coverObjects(objects, 8, 8, [20, 20], true), [5, 5]);
+    // A tap from elsewhere selects it.
+    assert.deepEqual(coverObjects(objects, 9, 9, [2, 2]), [5, 18]);
+
+    // A tap in the name selects it on the phone and on the PC.
+    const h = harness();
+    h.mirror.open();
+    await h.reply({ ...snapshot('Test :sweat_smile:'), objects });
+    h.mirror.input('Test :sweat_smile:', 9, 9);
+    assert.deepEqual([h.changes.at(-1).selectionStart, h.changes.at(-1).selectionEnd], [5, 18]);
+    const edit = h.requests.at(-1);
+    assert.equal(edit.action, 'mirror-edit');
+    assert.deepEqual([edit.data.selectionStart, edit.data.selectionEnd], [5, 18]);
+    // A field without objects forgets earlier ones.
+    await h.reply({ accepted: true, snapshot: snapshot('plain') });
+    assert.deepEqual(h.changes.at(-1).objects, []);
 });

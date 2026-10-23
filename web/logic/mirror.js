@@ -1,6 +1,30 @@
 import { nextReplacementStep, replacementFor } from './text-operations.js';
 
 /**
+ * The caret or selection covering whole inline objects (objects: [start, end] of each, from the PC: Discord's emoji
+ * names): the PC's caret stops only at their edges. A moving caret (the keyboard's space-bar cursor: moving, or one
+ * step from an edge) crosses it, in the direction it goes; a caret landing inside from elsewhere (a tap) selects it;
+ * a selection edge inside one takes in all of it. previous: the selection before, [start, end].
+ */
+export function coverObjects(objects = [], selectionStart, selectionEnd, previous = null, moving = false) {
+    for (const [start, end] of objects) {
+        const inside = (position) => position > start && position < end;
+        if (selectionStart === selectionEnd && inside(selectionStart)) {
+            const [from, to] = previous ?? [];
+            // From the object selected (a tap, then the cursor moved): to the edge it moved toward.
+            if (from === start && to === end)
+                return selectionStart - start > end - selectionStart ? [end, end] : [start, start];
+            const stepped = from === to && (from === start || from === end) && Math.abs(selectionStart - from) === 1;
+            if ((moving || stepped) && from !== undefined) return selectionStart > from ? [end, end] : [start, start];
+            return [start, end];
+        }
+        if (inside(selectionStart)) selectionStart = start;
+        if (inside(selectionEnd)) selectionEnd = end;
+    }
+    return [selectionStart, selectionEnd];
+}
+
+/**
  * The mirror (CONTEXT.md) of a readable PC field: the phone's edits go to the PC, the PC's changes come back.
  * send(action, data) → Promise; render(state) on every change. now() and typingMovesFocus (ms): a focus change this
  * soon after the PC took typing comes from that typing (see the typing session).
@@ -15,7 +39,9 @@ export function createMirror(send, render, { now = () => performance.now(), typi
         retried = false,
         generation = 0,
         // When the PC last took typing: a focus change soon after comes from that typing (a code's next box).
-        typedAt = -Infinity;
+        typedAt = -Infinity,
+        // When the phone's caret last moved alone: moves this close together are the space-bar cursor sliding.
+        caretMovedAt = -Infinity;
     /** A replay without key presses: the typing only (see replay). */
     const typingOnly = (before, typed, target) => {
         const { backspaces, ...rest } = replay(before, typed, target) || {};
@@ -23,7 +49,7 @@ export function createMirror(send, render, { now = () => performance.now(), typi
     };
     const publish = () => render({ ...state });
     // Nothing is known of the field: no text from an earlier one may show (typing blind would add to it).
-    const unknown = { text: '', selectionStart: 0, selectionEnd: 0 };
+    const unknown = { text: '', selectionStart: 0, selectionEnd: 0, objects: [] };
     /** Takes the PC's state; pending: local typing still to send on top of it (see replay). */
     function adopt(snapshot, pending = null) {
         confirmed = snapshot;
@@ -38,6 +64,7 @@ export function createMirror(send, render, { now = () => performance.now(), typi
             kind: snapshot.kind || 'text',
             selectionStart: snapshot.selectionStart || 0,
             selectionEnd: snapshot.selectionEnd || 0,
+            objects: snapshot.objects || [],
             ...pending,
         };
         publish();
@@ -233,11 +260,26 @@ export function createMirror(send, render, { now = () => performance.now(), typi
                 && selectionStart === state.selectionStart
                 && selectionEnd === state.selectionEnd;
             if (same) return;
+            // A caret moved into an emoji's name crosses or selects it (coverObjects): the phone's field shows it at once.
+            let covered = false;
+            if (previous === state.text && text === state.text) {
+                const moving = now() - caretMovedAt < 400;
+                caretMovedAt = now();
+                const [start, end] = coverObjects(
+                    state.objects,
+                    selectionStart,
+                    selectionEnd,
+                    [state.selectionStart, state.selectionEnd],
+                    moving
+                );
+                covered = start !== selectionStart || end !== selectionEnd;
+                [selectionStart, selectionEnd] = [start, end];
+            }
             const { backspaces, ...replayed } =
                 (previous !== state.text && replay(previous, { text, selectionStart }, state)) || {};
             state = { ...state, ...('text' in replayed ? replayed : { text, selectionStart, selectionEnd }) };
             dirty = true;
-            if ('text' in replayed) publish();
+            if ('text' in replayed || covered) publish();
             flush();
         },
         compose(value) {
