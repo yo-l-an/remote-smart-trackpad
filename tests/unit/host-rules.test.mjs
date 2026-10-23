@@ -242,6 +242,33 @@ test('insert strategy: line breaks each field takes', { skip: !windows }, async 
     assert.equal(await strategy({ text: 'a\nb', framework: 'WPF', className: 'TextBox' }), 'paste');
 });
 
+test('USB dongle: the HID usage of each key the remote presses', { skip: !windows }, async () => {
+    const usage = (virtualKey) => ask('Get-DongleUsage', { virtualKey });
+    // Navigation keys, never their number pad twins.
+    assert.deepEqual(
+        await Promise.all([0x25, 0x26, 0x27, 0x28, 0x24, 0x23, 0x21, 0x22, 0x2d, 0x2e].map(usage)),
+        [0x50, 0x52, 0x4f, 0x51, 0x4a, 0x4d, 0x4b, 0x4e, 0x49, 0x4c]
+    );
+    // Enter, Escape, Backspace, Tab, F1, F24, Windows, AltGr, Control, Shift, Pause, Print Screen.
+    assert.deepEqual(
+        await Promise.all([0x0d, 0x1b, 0x08, 0x09, 0x70, 0x87, 0x5b, 0xa5, 0x11, 0x10, 0x13, 0x2c].map(usage)),
+        [0x28, 0x29, 0x2a, 0x2b, 0x3a, 0x73, 0xe3, 0xe6, 0xe0, 0xe1, 0x48, 0x46]
+    );
+    // Media keys are consumer usages (+0x10000): volume up, mute, play/pause.
+    assert.deepEqual(await Promise.all([0xaf, 0xad, 0xb3].map(usage)), [0x100e9, 0x100e2, 0x100cd]);
+});
+
+test('USB dongle: characters typed as keys of the layout', { skip: !windows }, async () => {
+    const typing = (text, capsLock = false) => ask('Get-DongleTyping', { character: text.charCodeAt(0), capsLock });
+    assert.equal(await typing(' '), 't 44 0');
+    // Control characters and characters no key types (an emoji's half) stay with Windows' own typing.
+    assert.equal(await typing('\n'), null);
+    assert.equal(await typing('\ud83d'), null);
+    // Caps Lock flips Shift on a letter, whatever key types it on this layout.
+    const [usage, modifiers] = (await typing('a')).split(' ').slice(1).map(Number);
+    assert.equal(await typing('a', true), `t ${usage} ${modifiers ^ 2}`);
+});
+
 test('field verdicts recorded from real browsers stay the same', { skip: !windows }, async () => {
     let recorded;
     try {

@@ -7,7 +7,10 @@ $ErrorActionPreference = 'Stop'
 $hostDirectory = Join-Path $PSScriptRoot '..\..\host\windows'
 Import-Module (Join-Path $hostDirectory 'mirror-rules.psm1') -DisableNameChecking
 Import-Module (Join-Path $hostDirectory 'input.psm1') -DisableNameChecking
-$rules = @('Get-FieldVerdict', 'Get-FieldKind', 'Repair-MirrorText', 'Get-EditOutcome', 'Select-InsertStrategy')
+# The USB dongle's keys (Dongle in native.psm1), on this PC's keyboard layout.
+function Get-DongleUsage($facts) { return [Dongle]::Usage([int]$facts.virtualKey, [Dongle]::ForegroundLayout()) }
+function Get-DongleTyping($facts) { return [Dongle]::TypeCommand([char][int]$facts.character, [Dongle]::ForegroundLayout(), [bool]$facts.capsLock) }
+$rules = @('Get-FieldVerdict', 'Get-FieldKind', 'Repair-MirrorText', 'Get-EditOutcome', 'Select-InsertStrategy', 'Get-DongleUsage', 'Get-DongleTyping')
 while ($null -ne ($line = [Console]::ReadLine())) {
     try {
         $request = ConvertFrom-Json -InputObject $line

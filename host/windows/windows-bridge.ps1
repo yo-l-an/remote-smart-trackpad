@@ -105,7 +105,7 @@ function Invoke-Input([scriptblock]$command) {
     }
     throw "$elevated runs as administrator: Windows keeps the remote off it. Use the PC's mouse or keyboard to leave it."
 }
-$readActions = @('mirror-read', 'mirror-close', 'media-state', 'release')
+$readActions = @('mirror-read', 'mirror-close', 'media-state', 'release', 'dongle')
 while ($null -ne ($line = [Console]::ReadLine())) {
     try {
         $request = ConvertFrom-Json -InputObject $line
@@ -141,6 +141,8 @@ while ($null -ne ($line = [Console]::ReadLine())) {
             'mirror-edit' { $result = Invoke-Reader 'mirror-edit' $data }
             'mirror-close' { [void](Invoke-Reader 'mirror-close' $data) }
             'release' { Release-All }
+            # The optional USB dongle (dongle/) takes over the input Windows rejects; its search runs in the background.
+            'dongle' { if ($data.enabled) { [Dongle]::Start() } else { [Dongle]::Stop() } }
             default { throw 'Unknown command' }
         }
         @{ id=$request.id; ok=$true; result=$result } | ConvertTo-Json -Compress -Depth 5

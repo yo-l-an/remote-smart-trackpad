@@ -164,6 +164,7 @@ function Release-All {
         elseif ($keyCodes.ContainsKey($name)) { [void][NativeInput]::Key($keyCodes[$name], $false) }
         [void]$held.Remove($name)
     }
+    [Dongle]::Release()
 }
 
 $mediaSessions = $null
