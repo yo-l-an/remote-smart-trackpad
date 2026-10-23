@@ -302,6 +302,11 @@ class PhoneSecurity : public BLESecurityCallbacks {
 void startBluetooth() {
     phoneCommands = xStreamBufferCreate(2048, 1);
     BLEDevice::init("Trackpad dongle");
+    // +15 dBm, up from the default +9, for a phone a room or two away. The S3 steps by 3 dB: +18 with a 3 dBi external
+    // antenna would pass the European 20 dBm limit.
+    BLEDevice::setPower(ESP_PWR_LVL_P15, ESP_BLE_PWR_TYPE_DEFAULT);
+    BLEDevice::setPower(ESP_PWR_LVL_P15, ESP_BLE_PWR_TYPE_ADV);
+    BLEDevice::setPower(ESP_PWR_LVL_P15, ESP_BLE_PWR_TYPE_SCAN);
     BLEDevice::setSecurityCallbacks(new PhoneSecurity());
     BLESecurity *security = new BLESecurity();
     security->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
