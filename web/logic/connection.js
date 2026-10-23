@@ -23,7 +23,13 @@ export function createConnection(changed) {
         if (!token) return changed({ state: 'pairing' });
         changed({ state: 'connecting' });
         try {
-            const response = await fetch('/api/status', { headers: { Authorization: `Bearer ${token}` } });
+            // A PC whose server is down may drop the connection without refusing it (the Windows firewall does): the
+            // attempt would hang for a minute, and the server back meanwhile would wait for it. A short one fails and
+            // retries instead.
+            const response = await fetch('/api/status', {
+                headers: { Authorization: `Bearer ${token}` },
+                signal: AbortSignal.timeout(3000),
+            });
             if (current !== generation) return;
             if (response.status === 401) {
                 localStorage.removeItem(tokenKey);
@@ -33,6 +39,10 @@ export function createConnection(changed) {
             socket = new WebSocket(
                 `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/socket?token=${encodeURIComponent(token)}`
             );
+            const opening = socket;
+            setTimeout(() => {
+                if (opening.readyState === WebSocket.CONNECTING) opening.close();
+            }, 5000);
             socket.onmessage = (event) => {
                 if (current !== generation) return;
                 const message = JSON.parse(event.data);
