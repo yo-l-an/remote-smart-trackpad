@@ -356,15 +356,14 @@ function applyConnection() {
 The USB dongle over Bluetooth (dongle/README.md), a fallback while the PC is out of reach (the BIOS): the phone drives
 the dongle itself, typing blind through the layout chosen in the options. The PC tells whether its dongle is turned on
 (dongle/.env); the phone remembers it, so the fallback still shows when the PC is gone, and forgets it only when the
-PC says it is off. Under "Disconnected", a button connects to the dongle while the "Fallback to USB dongle with Web
-Bluetooth when disconnected from PC" option is off, and turns it on: from then on the phone reconnects to the dongle on its own, where the browser lets a
-page do that without a tap (otherwise the button stays). Once the PC is back, commands go to it again.
+PC says it is off. While the PC is out of reach and the phone is not on the dongle, Connect USB dongle shows in the top
+bar: Web Bluetooth needs a tap to connect (Chrome on Android lets no page reconnect on its own). Once the PC is back,
+commands go to it again.
 */
 const dongleOfferedKey = 'remote-smart-trackpad-dongle-offered';
 let dongleOffered = false,
-    // The PC was lost (not just reconnecting between two retries); the automatic reconnection to the dongle failed.
+    // The PC was lost (not just reconnecting between two retries).
     pcLost = false,
-    dongleAutoFailed = false,
     // The PC's server uses a plugged-in dongle for the input Windows rejects (lock screen, UAC, admin apps).
     pcDongle = false,
     dongleError = '';
@@ -374,12 +373,8 @@ try {
 const dongleLink = createDongleLink({
     layout: () => option.dongleLayout,
     changed(state, reason) {
-        // A dongle lost while the PC still is: the status says why, and the phone tries again once the Bluetooth link
-        // settles.
-        if (state === 'off' && route === 'dongle') {
-            if (reason) dongleError = reason;
-            if (option.dongleFallback) setTimeout(fallBackToDongle, 1000);
-        }
+        // A dongle lost while the PC still is: the status says why.
+        if (state === 'off' && route === 'dongle' && reason) dongleError = reason;
         applyConnection();
     },
 });
@@ -392,35 +387,14 @@ function setDongleOffered(offered) {
     try {
         localStorage.setItem(dongleOfferedKey, String(offered));
     } catch {}
-    if (!offered) {
-        options.set('dongleFallback', false);
-        if (dongleLink.state !== 'off') dongleLink.disconnect();
-    }
+    if (!offered && dongleLink.state !== 'off') dongleLink.disconnect();
     showDongleOptions();
 }
-const offerDongle = () =>
-    dongleOffered
-    && bluetoothSupported()
-    && pcLost
-    && dongleLink.state === 'off'
-    && (!option.dongleFallback || dongleAutoFailed);
-async function fallBackToDongle() {
-    if (!dongleOffered || !option.dongleFallback || !pcLost || !bluetoothSupported() || dongleLink.state !== 'off')
-        return;
-    try {
-        dongleAutoFailed = !(await dongleLink.reconnect());
-    } catch (error) {
-        dongleAutoFailed = true;
-        dongleError = error.message;
-    }
-    refreshStatus();
-}
+const offerDongle = () => dongleOffered && bluetoothSupported() && pcLost && dongleLink.state === 'off';
 $('#dongle-connect').addEventListener('click', async () => {
     dongleError = '';
     try {
         await dongleLink.request();
-        dongleAutoFailed = false;
-        options.set('dongleFallback', true);
     } catch (error) {
         // Closing the browser's device chooser is no error.
         if (error.name !== 'NotFoundError') dongleError = error.message;
@@ -437,10 +411,7 @@ const connection = createConnection(({ state, dongle, dongleConnected }) => {
         pcLost = false;
         dongleError = '';
         if (dongleLink.state !== 'off') dongleLink.disconnect();
-    } else if ((state === 'disconnected' || state === 'unavailable') && !pcLost) {
-        pcLost = true;
-        fallBackToDongle();
-    }
+    } else if (state === 'disconnected' || state === 'unavailable') pcLost = true;
     applyConnection();
 });
 // A command can come back with a notice: something the PC did on its own to carry it out (it moved the focus off an
@@ -968,10 +939,6 @@ options.onChange((names) => {
     if (names.includes('media')) {
         schedulePolling();
         refreshMedia();
-    }
-    if (names.includes('dongleFallback')) {
-        fallBackToDongle();
-        refreshStatus();
     }
 });
 showDongleOptions();

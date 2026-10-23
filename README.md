@@ -125,7 +125,7 @@ The feature is off by default, and the server then does not look for a dongle. T
 
 The tray menu then shows **Use the USB dongle**. Clear it to stop using the dongle without unplugging it.
 
-The dongle also works without the server, for the BIOS: when the phone loses the PC, a **Connect USB dongle** button takes the place of back and forward in the top bar, and the phone drives the dongle over Bluetooth (Chrome or Edge; press the dongle's BOOT button the first time to pair). The phone remembers it with **Fallback to USB dongle with Web Bluetooth when disconnected from PC** in its options, and goes back to the PC as soon as it is reachable.
+The dongle also works without the server, for the BIOS: when the phone loses the PC, a **Connect USB dongle** button takes the place of back and forward in the top bar, and the phone drives the dongle over Bluetooth (Chrome or Edge; press the dongle's BOOT button the first time to pair). The phone goes back to the PC as soon as it is reachable.
 
 The [dongle's README](./dongle/README.md) gives the details and the limits: Windows' pointer speed applies to the dongle's moves, and through Bluetooth the phone types blind with the layout chosen in its options.
 

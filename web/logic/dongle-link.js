@@ -14,9 +14,8 @@ export const bluetoothSupported = () => typeof navigator !== 'undefined' && Bool
  * It takes the remote's commands, as the server would (send(action, data) → Promise of the PC's answer), and writes
  * the dongle's: layout() names the keyboard layout to type with.
  *
- * changed(state, reason) on every change: 'off', 'connecting' or 'ready'; reason says why a link was lost. request() asks the user to pick the dongle (it
- * needs a tap); reconnect() reaches one this page was allowed before, without a tap, where the browser can
- * (navigator.bluetooth.getDevices): false when it cannot.
+ * changed(state, reason) on every change: 'off', 'connecting' or 'ready'; reason says why a link was lost. request()
+ * asks the user to pick the dongle: it needs a tap.
  */
 export function createDongleLink({ changed, layout }) {
     const translator = createDongleCommands();
@@ -118,15 +117,6 @@ export function createDongleLink({ changed, layout }) {
             if (await bluetoothOff()) throw new Error('Bluetooth is off on this phone');
             const found = await navigator.bluetooth.requestDevice({ filters: [{ services: [serviceUuid] }] });
             await attach(found);
-        },
-        async reconnect() {
-            if (state !== 'off' || !navigator.bluetooth?.getDevices) return false;
-            if (await bluetoothOff()) throw new Error('Bluetooth is off on this phone');
-            const known = await navigator.bluetooth.getDevices();
-            const found = known.find((candidate) => candidate === device) ?? known[0];
-            if (!found) return false;
-            await attach(found);
-            return true;
         },
         disconnect() {
             stopGlide();

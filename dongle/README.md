@@ -57,7 +57,7 @@ Do these steps once, while the PC and its server run:
 4. Within those 60 seconds, tap **Connect USB dongle**. If the browser asks for access to nearby devices, allow it. Pick **Trackpad dongle** in the list.
 5. Accept the pairing request of the phone.
 
-The status shows **Connected with USB dongle** for a few seconds, and its dot turns hollow (a ring): commands go through the dongle. The dongle's LED is green. The phone also turns on **Fallback to USB dongle with Web Bluetooth when disconnected from PC** in its options.
+The status shows **Connected with USB dongle** for a few seconds, and its dot turns hollow (a ring): commands go through the dongle. The dongle's LED is green.
 
 ### Use it in the BIOS
 
@@ -78,7 +78,7 @@ When Windows has started and the server answers again, the phone leaves the dong
 
 ### Reconnecting
 
-With **Fallback to USB dongle with Web Bluetooth when disconnected from PC** on, the phone connects to the dongle on its own when it loses the PC, where the browser lets a page do that without a tap. Chrome on Android asks for a tap at each visit for now, so the button stays in the top bar: tap it and pick the dongle again. Clear the option to stop that automatic try.
+Each time the phone loses the PC, tap **Connect USB dongle** and pick **Trackpad dongle** again: Web Bluetooth lets no page connect without a tap (Chrome on Android cannot reconnect on its own). A paired phone needs no BOOT press.
 
 ### Troubleshooting
 
