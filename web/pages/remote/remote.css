@@ -198,10 +198,14 @@ svg.icon-large {
     corner-shape: round;
     background: var(--border);
 }
-#connection:not([data-state='ready']) .status-dot {
+#connection:not([data-state='ready'], [data-state='info']) .status-dot {
     background: var(--warning);
 }
 /* A permission Windows refused: red, dot and text. */
+/* Through the USB dongle (the PC's server out of reach): the same dot, hollow, whatever its color. */
+#connection[data-route='dongle'] .status-dot {
+    mask: radial-gradient(circle, transparent 0.17rem, #000 0.18rem);
+}
 #connection[data-state='danger'] .status-dot {
     background: var(--danger);
 }
@@ -234,6 +238,27 @@ svg.icon-large {
 .topbar-actions svg {
     width: 1.25rem;
     height: 1.25rem;
+}
+/* Connect USB dongle: a pill in place of back and forward, as tall as their line, so the top bar keeps its height. */
+.topbar-actions #dongle-connect {
+    position: relative;
+    align-self: center;
+    width: auto;
+    height: 1.75rem;
+    margin-right: var(--space-1);
+    padding: 0 var(--space-3);
+    border-radius: 999rem;
+    corner-shape: round;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+/* Its tap area reaches the line's full height. */
+.topbar-actions #dongle-connect::before {
+    position: absolute;
+    inset: calc((1.75rem - var(--action-size)) / 2) 0;
+    content: '';
 }
 #controls {
     display: flex;
@@ -1283,6 +1308,15 @@ a.options-action.is-pressed {
         background-color 120ms ease-out,
         color 120ms ease-out;
 }
+/* A segment's text wraps centered when it is too long for its share of the pill. */
+.options .segmented label {
+    line-height: 1.2;
+    text-align: center;
+}
+/* The dongle's layouts, the longest segment texts: a touch smaller, to fit on one line. */
+#dongle-options .segmented label {
+    font-size: 0.6875rem;
+}
 /* The label is the whole segment; its 44px-tall tap area reaches past the pill. */
 .options .segmented label::before {
     position: absolute;
@@ -1451,8 +1485,10 @@ a.options-action {
 .options input:checked + .checkbox svg {
     opacity: 1;
 }
+/* Square whatever the text beside it: a label on two lines would squeeze it. */
 .checkbox {
     display: flex;
+    flex: none;
     align-items: center;
     justify-content: center;
     width: 1.125rem;
@@ -1489,6 +1525,10 @@ a.options-action {
 }
 .option-separator:first-child {
     margin-top: 0;
+}
+/* The USB dongle's group starts with its separator, which keeps the space above it. */
+#dongle-options > .option-separator:first-child {
+    margin-top: var(--space-5);
 }
 .options .option-separator hr {
     flex: 1;

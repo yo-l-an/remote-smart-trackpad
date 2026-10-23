@@ -40,7 +40,7 @@ export function createConnection(changed) {
                 if (message.type === 'status') {
                     active = message.state === 'ready';
                     if (active) delay = 500;
-                    changed({ state: message.state });
+                    changed({ state: message.state, dongle: message.dongle, dongleConnected: message.dongleConnected });
                     // The PC restarts its Windows bridge on its own; reconnecting picks up its state if a push was missed.
                     if (message.state === 'unavailable') retry(current);
                     return;

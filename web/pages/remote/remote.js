@@ -5,6 +5,7 @@ import '../../ui/text-editor.js';
 import { addIcons } from '../../ui/icons.js';
 import { attachHaptics, setHaptics, tick } from '../../ui/haptics.js';
 import { createConnection } from '../../logic/connection.js';
+import { bluetoothSupported, createDongleLink } from '../../logic/dongle-link.js';
 import { createOptions } from '../../logic/options.js';
 import { bindOptionsMenu, readSchema } from '../../ui/options-menu.js';
 import { createTypingSession } from '../../logic/typing-session.js';
@@ -45,6 +46,10 @@ for (const button of navButtons)
             })
         )
     );
+// Back and forward give their place to Connect USB dongle while it shows.
+function showNavButtons() {
+    for (const button of navButtons) button.hidden = option.navButtons === false || !$('#dongle-connect').hidden;
+}
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const rem = (pixels) => `${pixels / parseFloat(getComputedStyle(document.documentElement).fontSize)}rem`;
 
@@ -66,19 +71,24 @@ const labels = {
     connecting: 'Connecting…',
     disconnected: 'Disconnected',
     unavailable: 'PC unavailable · reconnecting…',
-    ready: 'Connected',
+    ready: 'Connected with PC server',
+    readyWithDongle: 'Connected with PC server and USB dongle',
+    dongle: 'Connected with USB dongle',
 };
+// connectionState: the PC's connection. route: where commands go, 'pc', 'dongle' (the USB dongle over Bluetooth,
+// while the PC is out of reach) or null.
 let connectionState = 'connecting',
+    route = null,
     connected = false,
     // The typing session's latest view (logic/typing-session.js).
     typing = { open: false },
     notice = '',
-    // How the notice shows: warning (orange) or danger (red, a permission Windows refused).
+    // How the notice shows: warning (orange), danger (red, a permission Windows refused) or info (the dot as it is).
     noticeLevel = 'warning',
     noticeTimer;
 function refreshStatus() {
-    let message = labels[connectionState],
-        state = connectionState;
+    let message = labels[route ? 'ready' : connectionState],
+        state = route ? 'ready' : connectionState;
     if (state === 'ready') {
         state = 'warning';
         if (notice) {
@@ -89,11 +99,25 @@ function refreshStatus() {
             message = typing.reason || 'No text field · typing to PC';
         else state = 'ready';
     }
+    if (!route && dongleError) message += ` · ${dongleError}`;
+    $('#dongle-connect').hidden = !offerDongle();
+    showNavButtons();
     $('#connection').dataset.state = state;
+    // The dot is hollow while commands go through the USB dongle, full through the PC's server.
+    $('#connection').dataset.route = route ?? '';
     $('#connection').title = message;
     $('#connection').setAttribute('aria-label', message);
     $('#connection-label').textContent = state === 'ready' ? '' : message;
 }
+// A tap on a quiet status (connected, nothing to say) tells for a moment what the remote is connected with.
+$('#connection').addEventListener('click', () => {
+    if (!route || $('#connection-label').textContent) return;
+    const label =
+        route === 'dongle' ? 'dongle'
+        : pcDongle ? 'readyWithDongle'
+        : 'ready';
+    showNotice(labels[label], 3000, 'info');
+});
 /**
  * Shows a command error for a few seconds, then returns to the connection state. Not while disconnected: the
  * connection state says it already (a command sent as the phone wakes up fails before the connection is back).
@@ -126,7 +150,7 @@ function applyLayout() {
     pad.freeScroll = option.freeScroll === true;
     showModes();
     pad.tapScroll = { x: option.doubleTapScrollX === true, y: option.doubleTapScrollY === true };
-    for (const button of navButtons) button.hidden = option.navButtons === false;
+    showNavButtons();
     applyHaptics();
     app.classList.toggle('editing', shownEditing);
     $('#editor-open').hidden = shownEditing;
@@ -291,35 +315,138 @@ async function refreshMedia() {
     } catch {}
 }
 
-const connection = createConnection(({ state }) => {
-    connected = state === 'ready';
-    connectionState = state;
-    const pairing = state === 'pairing';
+/** Routes commands to the PC when it is connected, else to the USB dongle when it is, and updates the interface. */
+function applyConnection() {
+    const next =
+        connectionState === 'ready' ? 'pc'
+        : dongleLink.state === 'ready' ? 'dongle'
+        : null;
+    const pairing = connectionState === 'pairing';
     $('#pairing').hidden = !pairing;
     $('#controls').hidden = pairing;
     // A lost connection keeps the interface as it is (editing, the menu, modifiers shown held): only gestures in
-    // progress end. The PC let go of every key meanwhile; the held modifiers are pressed again once back.
-    if (!connected) {
+    // progress end. The PC let go of every key meanwhile; the held modifiers are pressed again once back. Switching
+    // between the PC and the dongle is both: what one held, the other never had.
+    if (route && next !== route) {
+        route = null;
+        connected = false;
         pad.cancelGesture();
         session.disconnected();
         motion.reset();
-    } else {
+    }
+    if (next && next !== route) {
+        route = next;
+        connected = true;
         // An error from before the connection came back no longer applies.
         notice = '';
+        dongleError = '';
         clearTimeout(noticeTimer);
         rows.restore();
         session.connected();
         refreshMedia();
+        if (route === 'dongle') showNotice(labels.dongle, 4000, 'info');
         // A build may have landed while disconnected (the server restarts with the watcher's changes).
-        if (__DEV_RELOAD__) document.dispatchEvent(new CustomEvent('dev-build'));
+        if (__DEV_RELOAD__ && route === 'pc') document.dispatchEvent(new CustomEvent('dev-build'));
     }
     refreshStatus();
     schedulePolling();
+}
+
+/*
+The USB dongle over Bluetooth (dongle/README.md), a fallback while the PC is out of reach (the BIOS): the phone drives
+the dongle itself, typing blind through the layout chosen in the options. The PC tells whether its dongle is turned on
+(dongle/.env); the phone remembers it, so the fallback still shows when the PC is gone, and forgets it only when the
+PC says it is off. Under "Disconnected", a button connects to the dongle while the "Fallback to USB dongle with Web
+Bluetooth when disconnected from PC" option is off, and turns it on: from then on the phone reconnects to the dongle on its own, where the browser lets a
+page do that without a tap (otherwise the button stays). Once the PC is back, commands go to it again.
+*/
+const dongleOfferedKey = 'remote-smart-trackpad-dongle-offered';
+let dongleOffered = false,
+    // The PC was lost (not just reconnecting between two retries); the automatic reconnection to the dongle failed.
+    pcLost = false,
+    dongleAutoFailed = false,
+    // The PC's server uses a plugged-in dongle for the input Windows rejects (lock screen, UAC, admin apps).
+    pcDongle = false,
+    dongleError = '';
+try {
+    dongleOffered = localStorage.getItem(dongleOfferedKey) === 'true';
+} catch {}
+const dongleLink = createDongleLink({
+    layout: () => option.dongleLayout,
+    changed(state, reason) {
+        // A dongle lost while the PC still is: the status says why, and the phone tries again once the Bluetooth link
+        // settles.
+        if (state === 'off' && route === 'dongle') {
+            if (reason) dongleError = reason;
+            if (option.dongleFallback) setTimeout(fallBackToDongle, 1000);
+        }
+        applyConnection();
+    },
+});
+function showDongleOptions() {
+    $('#dongle-options').hidden = !dongleOffered;
+}
+function setDongleOffered(offered) {
+    if (offered === dongleOffered) return;
+    dongleOffered = offered;
+    try {
+        localStorage.setItem(dongleOfferedKey, String(offered));
+    } catch {}
+    if (!offered) {
+        options.set('dongleFallback', false);
+        if (dongleLink.state !== 'off') dongleLink.disconnect();
+    }
+    showDongleOptions();
+}
+const offerDongle = () =>
+    dongleOffered
+    && bluetoothSupported()
+    && pcLost
+    && dongleLink.state === 'off'
+    && (!option.dongleFallback || dongleAutoFailed);
+async function fallBackToDongle() {
+    if (!dongleOffered || !option.dongleFallback || !pcLost || !bluetoothSupported() || dongleLink.state !== 'off')
+        return;
+    try {
+        dongleAutoFailed = !(await dongleLink.reconnect());
+    } catch (error) {
+        dongleAutoFailed = true;
+        dongleError = error.message;
+    }
+    refreshStatus();
+}
+$('#dongle-connect').addEventListener('click', async () => {
+    dongleError = '';
+    try {
+        await dongleLink.request();
+        dongleAutoFailed = false;
+        options.set('dongleFallback', true);
+    } catch (error) {
+        // Closing the browser's device chooser is no error.
+        if (error.name !== 'NotFoundError') dongleError = error.message;
+    }
+    refreshStatus();
+});
+
+const connection = createConnection(({ state, dongle, dongleConnected }) => {
+    connectionState = state;
+    pcDongle = state === 'ready' && dongleConnected === true;
+    // Only a PC that says so turns the dongle off: an older server says nothing.
+    if (typeof dongle === 'boolean') setDongleOffered(dongle);
+    if (state === 'ready') {
+        pcLost = false;
+        dongleError = '';
+        if (dongleLink.state !== 'off') dongleLink.disconnect();
+    } else if ((state === 'disconnected' || state === 'unavailable') && !pcLost) {
+        pcLost = true;
+        fallBackToDongle();
+    }
+    applyConnection();
 });
 // A command can come back with a notice: something the PC did on its own to carry it out (it moved the focus off an
 // app run as administrator). Shown briefly: the next move would hide why the pointer jumped.
 const send = (action, data) =>
-    connection.send(action, data).then((result) => {
+    (route === 'dongle' ? dongleLink.send(action, data) : connection.send(action, data)).then((result) => {
         if (result?.notice) showNotice(result.notice, 2000, result.level);
         return result;
     });
@@ -842,7 +969,12 @@ options.onChange((names) => {
         schedulePolling();
         refreshMedia();
     }
+    if (names.includes('dongleFallback')) {
+        fallBackToDongle();
+        refreshStatus();
+    }
 });
+showDongleOptions();
 // Reset confirmation: fades and scales in; Cancel, Reset and Escape play the reverse before the dialog really closes.
 const confirmDialog = $('#reset-confirm');
 let closingDialog = false;

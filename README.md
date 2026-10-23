@@ -114,7 +114,7 @@ For development, run `npm ci`, then `npm start`. This command runs the server in
 
 ## Optional USB dongle
 
-Windows keeps the remote off its secure desktop (the lock screen, UAC prompts) and off apps run as administrator. A [LilyGO T-Dongle-S3](https://github.com/Xinyuan-LilyGO/T-Dongle-S3) plugged into the PC goes past that: Windows sees it as a real keyboard and mouse. The phone needs no change. The server sends the dongle only the input that Windows rejects; all other input goes through Windows as before.
+Windows keeps the remote off its secure desktop (the lock screen, UAC prompts) and off apps run as administrator, and nothing reaches the BIOS. A [LilyGO T-Dongle-S3](https://github.com/Xinyuan-LilyGO/T-Dongle-S3) plugged into the PC goes past that: Windows and the BIOS see it as a real keyboard and mouse. The phone needs no change. The server sends the dongle only the input that Windows rejects; all other input goes through Windows as before.
 
 The feature is off by default, and the server then does not look for a dongle. To turn it on:
 
@@ -123,7 +123,11 @@ The feature is off by default, and the server then does not look for a dongle. T
 3. Run the launcher again, so that the server and the tray menu read the file.
 4. Plug the dongle into the PC. Its LED turns green, and the console shows `USB dongle: connected on COMx`.
 
-The tray menu then shows **Use the USB dongle**. Clear it to stop using the dongle without unplugging it. The [dongle's README](./dongle/README.md) gives its limits: the server must run (no sign-in screen after a restart), Windows' pointer speed applies to its moves, and text goes through the PC's keyboard layout.
+The tray menu then shows **Use the USB dongle**. Clear it to stop using the dongle without unplugging it.
+
+The dongle also works without the server, for the BIOS: when the phone loses the PC, a **Connect USB dongle** button takes the place of back and forward in the top bar, and the phone drives the dongle over Bluetooth (Chrome or Edge; press the dongle's BOOT button the first time to pair). The phone remembers it with **Fallback to USB dongle with Web Bluetooth when disconnected from PC** in its options, and goes back to the PC as soon as it is reachable.
+
+The [dongle's README](./dongle/README.md) gives the details and the limits: Windows' pointer speed applies to the dongle's moves, and through Bluetooth the phone types blind with the layout chosen in its options.
 
 ## Network and HTTPS
 

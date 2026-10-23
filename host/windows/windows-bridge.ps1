@@ -142,7 +142,11 @@ while ($null -ne ($line = [Console]::ReadLine())) {
             'mirror-close' { [void](Invoke-Reader 'mirror-close' $data) }
             'release' { Release-All }
             # The optional USB dongle (dongle/) takes over the input Windows rejects; its search runs in the background.
-            'dongle' { if ($data.enabled) { [Dongle]::Start() } else { [Dongle]::Stop() } }
+            # Answers whether one is plugged in and answering.
+            'dongle' {
+                if ($data.enabled) { [Dongle]::Start() } else { [Dongle]::Stop() }
+                $result = @{ connected=[Dongle]::Connected }
+            }
             default { throw 'Unknown command' }
         }
         @{ id=$request.id; ok=$true; result=$result } | ConvertTo-Json -Compress -Depth 5

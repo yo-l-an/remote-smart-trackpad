@@ -42,9 +42,17 @@ const dongleOffFile = path.join(dataDirectory, 'dongle-off');
 const dongleOffered = /^\s*DONGLE_ENABLED\s*=\s*true\s*$/im.test(
     await readFile(path.join(root, 'dongle', '.env'), 'utf8').catch(() => '')
 );
-let dongleOn = dongleOffered && !existsSync(dongleOffFile);
-function applyDongle() {
-    if (dongleOffered) command('dongle', { enabled: dongleOn }).catch((error) => console.error(error.message));
+let dongleOn = dongleOffered && !existsSync(dongleOffFile),
+    dongleConnected = false;
+// Tells the bridge whether to use the dongle; the phones hear when one is plugged in or out. While the dongle is
+// offered, this runs every 2 s.
+async function applyDongle() {
+    if (!dongleOffered) return;
+    const answer = await command('dongle', { enabled: dongleOn }).catch((error) => console.error(error.message));
+    const connected = answer?.ok === true && answer.result?.connected === true;
+    if (connected === dongleConnected) return;
+    dongleConnected = connected;
+    transport.notify(bridge.available ? 'ready' : 'unavailable');
 }
 let bridge,
     bridgeStarted = 0,
@@ -69,7 +77,6 @@ function launchBridge() {
 launchBridge();
 // Always the current bridge: a crashed one is replaced (launchBridge).
 const command = (action, data) => bridge.command(action, data);
-applyDongle();
 
 function authorized(request) {
     const token =
@@ -220,7 +227,7 @@ const server = http.createServer(async (request, response) => {
                 response,
                 authorized(request) ? 200 : 401,
                 authorized(request) ?
-                    { state: bridge.available ? 'ready' : 'unavailable' }
+                    { state: bridge.available ? 'ready' : 'unavailable', dongle: dongleOffered }
                 :   { error: 'Pairing required' }
             );
         if (request.method === 'GET' && pathname === '/remote-smart-trackpad-ca.crt') {
@@ -263,8 +270,12 @@ const transport = createTransport({
     hasAccess: (id) => access.list().some((record) => record.id === id),
     command,
     available: () => bridge.available,
+    dongle: () => dongleOffered,
+    dongleConnected: () => dongleConnected,
 });
 server.on('upgrade', transport.handleUpgrade);
+applyDongle();
+const dongleTimer = dongleOffered ? setInterval(applyDongle, 2000) : null;
 
 const listeners = new Map();
 function stopDiscovery(address) {
@@ -396,6 +407,7 @@ async function shutdown() {
     if (stopping) return;
     stopping = true;
     clearInterval(listenerTimer);
+    clearInterval(dongleTimer);
     buildWatcher?.close();
     transport.close();
     for (const stop of discoveryStops.values()) stop();

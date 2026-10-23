@@ -19,6 +19,8 @@
                     <span class="status-dot"></span><span id="connection-label"></span>
                 </div>
                 <div class="topbar-actions">
+                    <!-- In place of back and forward while the PC is out of reach (remote.js). -->
+                    <button id="dongle-connect" type="button" hidden>Connect USB dongle</button>
                     <button class="fill-button" aria-label="Back" data-nav="back">
                         <span class="fill" data-icon="back"></span>
                     </button>
@@ -398,6 +400,24 @@
                 <button id="options-reload" class="options-action" type="button">
                     <span data-icon="reload"></span>Reload
                 </button>
+                <!-- Shown once the PC says its USB dongle is turned on (dongle/.env); hidden again only when it says off. -->
+                <div id="dongle-options" class="option-group" hidden>
+                    <div class="option-separator">
+                        <span>USB dongle</span>
+                        <hr />
+                    </div>
+                    <label
+                        ><input type="checkbox" name="dongleFallback" /><span class="checkbox" data-icon="check"></span
+                        >Fallback to USB dongle with Web Bluetooth when disconnected from PC</label
+                    >
+                    <div class="choice-setting">
+                        <span id="dongle-layout-label">Dongle keyboard layout</span>
+                        <div class="segmented" role="radiogroup" aria-labelledby="dongle-layout-label">
+                            <label><input type="radio" name="dongleLayout" value="fr" checked />AZERTY</label>
+                            <label><input type="radio" name="dongleLayout" value="us" />QWERTY (US, BIOS)</label>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
         <dialog id="reset-confirm" class="confirm" aria-labelledby="reset-confirm-title">

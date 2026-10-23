@@ -16,7 +16,17 @@ const allowedActions = new Set([
     'mirror-close',
 ]);
 
-export function createTransport({ authorized, hasAccess, command, available }) {
+// dongle(): whether the optional USB dongle is turned on in dongle/.env; each status tells the phones, which offer it
+// as a fallback when the PC is unreachable. dongleConnected(): whether the PC uses one right now.
+export function createTransport({
+    authorized,
+    hasAccess,
+    command,
+    available,
+    dongle = () => false,
+    dongleConnected = () => false,
+}) {
+    const status = (state) => ({ type: 'status', state, dongle: dongle(), dongleConnected: dongleConnected() });
     const clients = new Set();
     // Several devices may control the PC at once; each releases only the keys and buttons it pressed.
     async function releaseHeld(client) {
@@ -88,7 +98,7 @@ export function createTransport({ authorized, hasAccess, command, available }) {
             },
         };
         clients.add(client);
-        client.send({ type: 'status', state: available() ? 'ready' : 'unavailable' });
+        client.send(status(available() ? 'ready' : 'unavailable'));
         const heartbeat = setInterval(() => {
             if (socket.destroyed) return;
             if (Date.now() - client.lastPong > 15_000) return socket.destroy();
@@ -189,7 +199,7 @@ export function createTransport({ authorized, hasAccess, command, available }) {
             for (const client of clients) client.send(message);
         },
         notify(state) {
-            for (const client of clients) client.send({ type: 'status', state });
+            for (const client of clients) client.send(status(state));
         },
         revoke(id) {
             for (const client of clients) if (client.accessId === id) client.socket.destroy();
