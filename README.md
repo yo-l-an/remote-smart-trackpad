@@ -80,7 +80,7 @@ _Bravo, you can now use your computer on your couch._
 ## Known current limitations
 
 - **Windows secure screens are out of reach.** The sign-in and lock screens and UAC prompts run on Windows' secure desktop, which no app in your session can type into or read, on purpose. Use the PC's own keyboard there, or the optional [USB dongle](./dongle/README.md), which reaches the lock screen and UAC prompts (not the sign-in screen after a restart).
-- **Apps run as administrator** ignore input from the remote: Windows does not let a normal app drive an elevated one. The [USB dongle](./dongle/README.md) drives them.
+- **Apps run as administrator** ignore input from the remote: Windows does not let a normal app drive an elevated one. Run the server as administrator (tray menu, **Run as administrator**), or use the [USB dongle](./dongle/README.md).
 - **Some fields are typed blind, not mirrored**: VS Code's editor and terminal, other editors that draw their own text, password fields, and a few providers that do not report their selection (WPF's RichTextBox). Typing still works; the phone just cannot show the PC's text.
 - **Firefox search boxes** report themselves as read-only: they are typed blind, with the standard keyboard.
 - **Field types** come from an `<input>`'s type or a classic edit box's digits-only style. A web field that only asks for a keyboard through `inputmode` gets the standard one. Terminals are recognised in VS Code and the Windows console; Windows Terminal, Git Bash (mintty), PuTTY and ConEmu are recognised by name.
@@ -102,7 +102,9 @@ _Bravo, you can now use your computer on your couch._
 3. Right-click the tray icon, then select **Connect a device**. On the phone, scan the QR code, then enter your name and the six-digit pairing code. A code expires after ten minutes. To get a new code, select **New code** on the setup page of the PC.
 4. To install the remote as an app, open the trust page once. Its QR code is on the setup page. Then select **Install as app** in the options menu.
 
-The tray menu contains **Connect a device**, **Show console**, **Start with Windows**, **Restart server** and **Stop server**. When the optional [USB dongle](./dongle/README.md) is turned on in `dongle/.env`, it also contains **Use the USB dongle**. When you run the launcher again, it restarts the server.
+The tray menu contains **Connect a device**, **Show console**, **Start with Windows**, **Run as administrator**, **Restart server** and **Stop server**. When the optional [USB dongle](./dongle/README.md) is turned on in `dongle/.env`, it also contains **Use the USB dongle**. When you run the launcher again, it restarts the server.
+
+**Run as administrator** (tray menu) restarts the tray and its server as administrator, after the UAC prompt: the remote then drives apps run as administrator too. Starting the tray with **Run as administrator** from Explorer does the same, and replaces a tray that already runs. The choice is remembered (`.data/run-as-administrator`): the launcher and the server's restarts keep it, and **Start with Windows** goes through a scheduled task, _Remote Smart Trackpad (administrator)_, that starts the tray as administrator at sign-in without a prompt. Clear **Run as administrator** to go back to the user's rights; Start with Windows then goes back to the registry's Run value.
 
 The first run of the launcher enables **Start with Windows**. Later runs keep the setting that you select. At sign-in, Windows starts `.data/RemoteSmartTrackpad.exe` directly, without a console window. Keep the project and Node.js in their current folders. If you move one of them, run the launcher again, then disable and enable **Start with Windows**. [Manage Auto Start.cmd](./Manage%20Auto%20Start.cmd) also accepts the arguments `enable`, `disable` and `status`.
 

@@ -27,11 +27,25 @@ internal static class TrayHost {
         }
         // "--takeover": started by a tray switching modes (HostContext.SwitchMode), which leaves meanwhile.
         bool takeover = args.Length > 0 && args[0] == "--takeover";
+        bool elevated = Administrator.Current;
+        // Run as administrator is remembered: a tray started with the user's rights (the launcher, Explorer) hands over
+        // to one run as administrator, through the scheduled task when there is one (no prompt), else the UAC prompt.
+        // Declining the prompt keeps this one.
+        if (!elevated && !takeover && Administrator.Remembered(root) && Administrator.StartElevated()) return;
         bool relaunchWithUserRights = false;
-        using (var mutex = new Mutex(false, "Local\\RemoteSmartTrackpad-" + id))
-        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset, stopName))
-        using (var restart = new EventWaitHandle(false, EventResetMode.AutoReset, restartName)) {
-            if (!mutex.WaitOne(takeover ? 15000 : 0)) return;
+        // The user may signal a tray run as administrator (npm restart, the launcher's --stop), whose objects would
+        // otherwise be open to administrators only.
+        bool created;
+        using (var mutex = new Mutex(false, "Local\\RemoteSmartTrackpad-" + id, out created, Administrator.MutexAccess()))
+        using (var stop = new EventWaitHandle(false, EventResetMode.AutoReset, stopName, out created, Administrator.EventAccess()))
+        using (var restart = new EventWaitHandle(false, EventResetMode.AutoReset, restartName, out created, Administrator.EventAccess())) {
+            if (!mutex.WaitOne(takeover ? 15000 : 0)) {
+                // Started as administrator while a tray runs (Run as administrator from Explorer): it takes that one's
+                // place, which stops gracefully.
+                if (!elevated) return;
+                stop.Set();
+                if (!mutex.WaitOne(15000)) return;
+            }
             try {
                 using (var context = new HostContext(root, stop, restart)) {
                     Application.Run(context);
@@ -43,6 +57,75 @@ internal static class TrayHost {
         }
         // Back to the user's rights: Explorer starts the tray as the signed-in user, once this one is gone.
         if (relaunchWithUserRights) Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Application.ExecutablePath + "\"") { UseShellExecute = false });
+    }
+}
+
+/*
+Run as administrator, remembered across starts: .data/run-as-administrator is there while it is chosen. Starting with
+Windows then goes through a scheduled task that runs the tray with the highest privileges at sign-in, without a UAC
+prompt, in place of the registry's Run value. Only a tray run as administrator creates or deletes that task.
+*/
+internal static class Administrator {
+    public const string TaskName = "Remote Smart Trackpad (administrator)";
+    public static bool Current { get { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); } }
+    static string MarkerPath(string root) {
+        string data = Environment.GetEnvironmentVariable("REMOTE_SMART_TRACKPAD_DATA_DIRECTORY") ?? Path.Combine(root, ".data");
+        return Path.Combine(data, "run-as-administrator");
+    }
+    public static bool Remembered(string root) { return File.Exists(MarkerPath(root)); }
+    public static void Remember(string root, bool chosen) {
+        string marker = MarkerPath(root);
+        if (chosen) File.WriteAllText(marker, "The tray runs as administrator; clear Run as administrator in its menu to stop.");
+        else if (File.Exists(marker)) File.Delete(marker);
+    }
+    /// <summary>Starts this tray as administrator; false when that did not happen (the UAC prompt declined).</summary>
+    public static bool StartElevated() {
+        if (TaskExists() && Schtasks("/Run /TN \"" + TaskName + "\"") == 0) return true;
+        try {
+            Process.Start(new ProcessStartInfo(Application.ExecutablePath) { UseShellExecute = true, Verb = "runas" });
+            return true;
+        } catch (System.ComponentModel.Win32Exception) { return false; }
+    }
+    public static bool TaskExists() { return Schtasks("/Query /TN \"" + TaskName + "\"") == 0; }
+    // At the user's sign-in, with no time limit (a task's default stops it after 3 days) and on battery too.
+    public static void CreateTask() {
+        string user = SecurityElement(WindowsIdentity.GetCurrent().Name);
+        string executable = SecurityElement(Application.ExecutablePath);
+        string xml =
+            "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n" +
+            "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">" +
+            "<RegistrationInfo><Description>Starts Remote Smart Trackpad as administrator at sign-in (its tray menu).</Description></RegistrationInfo>" +
+            "<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + user + "</UserId></LogonTrigger></Triggers>" +
+            "<Principals><Principal id=\"Author\"><UserId>" + user + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>" +
+            "<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" +
+            "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings>" +
+            "<Actions Context=\"Author\"><Exec><Command>" + executable + "</Command></Exec></Actions></Task>";
+        string file = Path.Combine(Path.GetTempPath(), "remote-smart-trackpad-task.xml");
+        File.WriteAllText(file, xml, Encoding.Unicode);
+        try {
+            if (Schtasks("/Create /TN \"" + TaskName + "\" /XML \"" + file + "\" /F") != 0) throw new InvalidOperationException("Windows did not create the startup task.");
+        } finally { File.Delete(file); }
+    }
+    public static void DeleteTask() { if (TaskExists()) Schtasks("/Delete /TN \"" + TaskName + "\" /F"); }
+    static string SecurityElement(string text) { return System.Security.SecurityElement.Escape(text); }
+    static int Schtasks(string arguments) {
+        using (var process = Process.Start(new ProcessStartInfo("schtasks.exe", arguments) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true })) {
+            process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            return process.ExitCode;
+        }
+    }
+    static SecurityIdentifier User { get { return WindowsIdentity.GetCurrent().User; } }
+    public static System.Security.AccessControl.MutexSecurity MutexAccess() {
+        var security = new System.Security.AccessControl.MutexSecurity();
+        security.AddAccessRule(new System.Security.AccessControl.MutexAccessRule(User, System.Security.AccessControl.MutexRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+        return security;
+    }
+    public static System.Security.AccessControl.EventWaitHandleSecurity EventAccess() {
+        var security = new System.Security.AccessControl.EventWaitHandleSecurity();
+        security.AddAccessRule(new System.Security.AccessControl.EventWaitHandleAccessRule(User, System.Security.AccessControl.EventWaitHandleRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+        return security;
     }
 }
 
@@ -61,8 +144,8 @@ internal sealed class HostContext : ApplicationContext {
     private readonly ToolStripMenuItem startup;
     private bool stopping;
     // Running as administrator, Windows lets the remote act on apps run as administrator too (their windows and tray
-    // menus). Chosen in the tray menu for the current session; the tray starts with Windows with the user's rights.
-    private readonly bool elevated = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+    // menus). Chosen in the tray menu, or by starting the tray as administrator, and remembered (Administrator).
+    private readonly bool elevated = Administrator.Current;
     /// <summary>Set when this tray leaves to start again with the user's rights.</summary>
     public bool RelaunchWithUserRights { get; private set; }
 
@@ -97,7 +180,12 @@ internal sealed class HostContext : ApplicationContext {
         menu.Items.Add("Stop server", null, delegate { ExitThread(); });
         tray = new NotifyIcon { Icon = appIcon, Text = Title, ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += delegate { ShowConsole(); };
-        using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) startup.Checked = key != null && key.GetValue(StartupName) != null;
+        using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) startup.Checked = (key != null && key.GetValue(StartupName) != null) || Administrator.TaskExists();
+        // Run as administrator, however it started, is remembered; starting with Windows follows it (SetStartup).
+        if (elevated) {
+            Administrator.Remember(root, true);
+            if (startup.Checked) try { SetStartup(true); } catch (Exception error) { Append("Start with Windows: " + error.Message); }
+        }
         string marker = Path.Combine(root, ".data", "tray-initialized");
         if (!File.Exists(marker)) { SetStartup(true); File.WriteAllText(marker, "Startup preference initialized; use the tray menu to change it."); }
         node = File.ReadAllText(Path.Combine(root, ".data", "node-path.txt")).Trim();
@@ -134,7 +222,12 @@ internal sealed class HostContext : ApplicationContext {
         if (administrator) {
             try { Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--takeover") { UseShellExecute = true, Verb = "runas" }); }
             catch (System.ComponentModel.Win32Exception) { return; }
-        } else RelaunchWithUserRights = true;
+        } else {
+            // Back to the user's rights for good: starting with Windows goes through the Run value again.
+            Administrator.Remember(root, false);
+            if (startup.Checked) try { SetStartup(true); } catch (Exception error) { Append("Start with Windows: " + error.Message); }
+            RelaunchWithUserRights = true;
+        }
         Append(administrator ? "Restarting as administrator..." : "Restarting with the user's rights...");
         ExitThread();
     }
@@ -182,9 +275,15 @@ internal sealed class HostContext : ApplicationContext {
         Append(enabled ? "USB dongle: turned on in the tray menu" : "USB dongle: turned off in the tray menu");
         try { if (server != null && !server.HasExited) { server.StandardInput.WriteLine(enabled ? "dongle on" : "dongle off"); server.StandardInput.Flush(); } } catch (IOException) { }
     }
+    // Through the scheduled task while Run as administrator is remembered (a Run value cannot start an app as
+    // administrator), else the registry's Run value. Only a tray run as administrator changes the task.
     private void SetStartup(bool enabled) {
+        bool task = enabled && Administrator.Remembered(root);
+        if (task) Administrator.CreateTask();
+        else if (elevated) Administrator.DeleteTask();
+        else if (Administrator.TaskExists()) throw new InvalidOperationException("Run as administrator to change this: Windows starts the tray as administrator.");
         using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")) {
-            if (enabled) key.SetValue(StartupName, "\"" + Application.ExecutablePath + "\"");
+            if (enabled && !task) key.SetValue(StartupName, "\"" + Application.ExecutablePath + "\"");
             else key.DeleteValue(StartupName, false);
         }
         startup.Checked = enabled;
