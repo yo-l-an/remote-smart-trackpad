@@ -2,21 +2,26 @@
 // bridge, and each field must end up holding exactly what was typed (or what its mask makes of it): no letter
 // doubled, none lost, whether the phone reads the field or types blind. The phone must show the PC's text, or what
 // it typed blind.
-// - Phone: the app in headless Chrome, emulating a phone. It types like a hardware keyboard (keys), with a typo
-//   erased by Backspace (typo), like Gboard (ime: each word composed, then committed), slowly (slow: a pause
-//   between keys, where late answers show) or with Gboard's autocorrection fixing each word (correct).
-// - PC: tests/fixtures/typing.html in Chrome and Firefox windows, then their address bars, and native WinForms and
-//   WPF windows (tests/checks/typing-windows.ps1) and Windows' Notepad, each field in turn brought to the foreground
-//   and focused.
+// - Phone: the app in headless Chrome, emulating a phone, typed into by an emulated Gboard (tests/checks/gboard.mjs:
+//   composition, suggestions, the space bar's cursor, the Backspace swipe, dictation) or a hardware keyboard.
+// - PC: tests/fixtures/typing.html in Chrome and Firefox windows (plain fields, masks, code editors, and the real
+//   tiptap and Slate editors), then their address bars, native WinForms and WPF windows
+//   (tests/checks/typing-windows.ps1), Windows' Notepad and VS Code, each field in turn brought to the foreground and
+//   focused.
+// Two tiers. Smoke: every field, a short text typed with Gboard: can it be typed into, and does it hold what it
+// should. Edge: the fields where the mirror works hardest (data-edge in the fixture, edge in the cases here) get the
+// scenario catalogue below (special characters, replacements, selections, line breaks, the PC changing the text,
+// typing racing the reads), each in the fields that have what it needs; a field can name the scenarios it takes. A
+// case ends as soon as the PC holds the expected text and the phone shows it, not after a fixed wait.
 // Every test window carries a random marker in its title, and the test host's bridge refuses input unless the
 // foreground window has it (REMOTE_SMART_TRACKPAD_INPUT_GUARD): nothing typed can reach another app. Windows come
 // to the foreground one after the other, so leave the PC alone while it runs.
-//   node tests/checks/typing-check.mjs [--quick] [--target=chrome,firefox,winforms,wpf,notepad] [--case=id,id]
-//                                  [--mode=keys,ime,slow,typo,correct,...] [--verbose: what the phone sent]
+//   node tests/checks/typing-check.mjs [--quick] [--tier=smoke|edge] [--target=chrome,firefox,winforms,wpf,notepad,vscode]
+//                                  [--case=id,id] [--mode=smoke,drag,...: scenarios] [--verbose: what the phone sent]
 //                                  [--trace: what the phone was shown]
-// The full run takes about 45 minutes. --quick (about 3) plays one field of each kind that ever broke, in the modes
-// that found bugs, in Chrome and WinForms: enough after changes that do not touch typing itself. Run the full one
-// after changes to the typing session, the mirror or the bridge. --target, --case and --mode still narrow it.
+// --quick: smoke in Chrome and WinForms, edge in Chrome's hardest fields only (quickEdge): after changes that do not
+// touch typing itself. Run the full one after changes to the typing session, the mirror or the bridge. --tier,
+// --target, --case and --mode still narrow it.
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -26,6 +31,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { createGboard } from './gboard.mjs';
 import { cleanupBrowsers, installed, openBrowser } from './test-browsers.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -35,34 +41,14 @@ const option = (name) =>
         ?.split('=')[1]
         .split(',');
 const quick = process.argv.includes('--quick');
-// The quick run: per target, the fields kept (one of each kind), and the modes.
-const quickCases = {
-    chrome: ['input', 'editable', 'phone', 'complete', 'delayed', 'code-line', 'proxy', 'otp', 'address'],
-    winforms: ['textbox', 'multiline', 'masked'],
-    vscode: ['editor'],
-};
-const quickModes = ['keys', 'ime', 'typo', 'move', 'click', 'lines', 'unicode'];
+// The quick run's edge tier: Chrome's fields that broke the most, each a kind of its own.
+const quickEdge = ['textarea', 'tiptap', 'slate', 'code-line', 'delayed', 'complete'];
 const targets =
     option('target')
-    ?? (quick ? Object.keys(quickCases) : ['chrome', 'firefox', 'winforms', 'wpf', 'notepad', 'vscode']);
+    ?? (quick ? ['chrome', 'winforms'] : ['chrome', 'firefox', 'winforms', 'wpf', 'notepad', 'vscode']);
 const onlyCases = option('case');
-const modes = option('mode')
-    ?? (quick ? quickModes : null) ?? [
-        'keys',
-        'ime',
-        'slow',
-        'typo',
-        'correct',
-        'move',
-        'reopen',
-        'swipe',
-        'unicode',
-        'emoji',
-        'lines',
-        'paste',
-        'click',
-        'linger',
-    ];
+const onlyModes = option('mode');
+const tiers = option('tier') ?? ['smoke', 'edge'];
 const marker = `rst${Math.random().toString(36).slice(2, 8)}`;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const timeout = (promise, ms, what) => {
@@ -72,23 +58,24 @@ const timeout = (promise, ms, what) => {
 };
 const temp = (name) => mkdtemp(path.join(tmpdir(), `remote-smart-trackpad-${name}-`));
 
-// Native fixtures: what is typed into each field and what it must hold then (tests/checks/typing-windows.ps1).
+// Native fixtures: what is typed into each field and what it must hold then (tests/checks/typing-windows.ps1), and
+// their edge tier (true: every scenario they can take; a list: those only).
 const nativeCases = {
     winforms: [
         { id: 'textbox', typed: 'hello world', expected: 'hello world', caret: true },
-        { id: 'multiline', typed: 'hello world', expected: 'hello world', caret: true, lines: true },
-        { id: 'upper', typed: 'hello', expected: 'HELLO' },
-        { id: 'maxlength', typed: 'hello world', expected: 'hello' },
-        { id: 'masked', typed: '02102026', expected: '02/10/2026' },
-        { id: 'rich', typed: 'hello world', expected: 'hello world', caret: true, lines: true },
+        { id: 'multiline', typed: 'hello world', expected: 'hello world', caret: true, lines: true, edge: true },
+        { id: 'upper', typed: 'hello', expected: 'HELLO', edge: ['typo'] },
+        { id: 'maxlength', typed: 'hello world', expected: 'hello', edge: ['typo'] },
+        { id: 'masked', typed: '02102026', expected: '02/10/2026', edge: ['typo', 'slow'] },
+        { id: 'rich', typed: 'hello world', expected: 'hello world', caret: true, lines: true, edge: true },
         { id: 'combo', typed: 'apple pie', expected: 'apple pie' },
     ],
     wpf: [
         { id: 'textbox', typed: 'hello world', expected: 'hello world', caret: true },
-        { id: 'multiline', typed: 'hello world', expected: 'hello world', caret: true, lines: true },
-        { id: 'upper', typed: 'hello', expected: 'HELLO' },
-        { id: 'maxlength', typed: 'hello world', expected: 'hello' },
-        { id: 'rich', typed: 'hello world', expected: 'hello world', caret: true, lines: true },
+        { id: 'multiline', typed: 'hello world', expected: 'hello world', caret: true, lines: true, edge: true },
+        { id: 'upper', typed: 'hello', expected: 'HELLO', edge: ['typo'] },
+        { id: 'maxlength', typed: 'hello world', expected: 'hello', edge: ['typo'] },
+        { id: 'rich', typed: 'hello world', expected: 'hello world', caret: true, lines: true, edge: true },
         { id: 'combo', typed: 'apple pie', expected: 'apple pie' },
     ],
 };
@@ -97,7 +84,13 @@ const nativeCases = {
 // which must start with exactly what was typed.
 const addressCases = [
     { id: 'address', typed: 'hello world', expected: 'hello world', caret: true },
-    { id: 'address-completion', typed: '127.0', expected: '127.0…', check: (value) => /^127\.0(\.0\.1|$)/.test(value) },
+    {
+        id: 'address-completion',
+        typed: '127.0',
+        expected: '127.0…',
+        check: (value) => /^127\.0(\.0\.1|$)/.test(value),
+        edge: ['typo', 'slow'],
+    },
 ];
 
 /** A JSON-lines child process: one request per line, answered in order. */
@@ -131,6 +124,19 @@ function lineProcess(command, args) {
 /** Serves the fixture page, which asks for its next command each time it has run the previous one. */
 async function startFixturePage() {
     const html = await readFile(path.join(root, 'tests/fixtures/typing.html'), 'utf8');
+    // The real editors (tiptap, Slate), bundled once for the page.
+    const { build } = await import('esbuild');
+    const editors = (
+        await build({
+            entryPoints: [path.join(root, 'tests/fixtures/editors.js')],
+            bundle: true,
+            format: 'esm',
+            write: false,
+            minify: true,
+            define: { 'process.env.NODE_ENV': '"production"' },
+            logLevel: 'error',
+        })
+    ).outputFiles[0].text;
     let waiter = null,
         pending = null;
     const replies = [];
@@ -138,6 +144,8 @@ async function startFixturePage() {
         const url = new URL(request.url, 'http://localhost');
         if (url.pathname === '/')
             return response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(html);
+        if (url.pathname === '/editors.js')
+            return response.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }).end(editors);
         if (url.pathname !== '/next') return response.writeHead(404).end();
         let body = '';
         for await (const chunk of request) body += chunk;
@@ -343,13 +351,9 @@ async function startPhone(host) {
             );
             await until(`!${editor}.view.open`);
         },
-        /** keys: a hardware keyboard. ime: Gboard, composing each word and committing it, digits and spaces as is. */
-        /**
-         * keys: a hardware keyboard; typo: the same with a wrong key erased with Backspace after the third.
-         * ime: Gboard, composing each word and committing it, digits and spaces as is; correct: Gboard composing
-         * each word misspelled (its last two letters swapped) and its autocorrection committing it right.
-         */
-        async type(text, style, gap) {
+        gboard: createGboard({ page, evaluate, wait }),
+        /** A hardware keyboard; typo: the same with a wrong key erased with Backspace after the third. */
+        async keys(text, style = 'keys', gap = 40) {
             const key = async (name, character) => {
                 const code = name === 'Backspace' ? { windowsVirtualKeyCode: 8, code: 'Backspace' } : {};
                 const typed = character ? { text: character, unmodifiedText: character } : {};
@@ -357,51 +361,13 @@ async function startPhone(host) {
                 await page('Input.dispatchKeyEvent', { type: 'keyUp', key: name, ...code });
                 await wait(gap);
             };
-            if (style === 'keys' || style === 'typo') {
-                for (const [index, character] of [...text].entries()) {
-                    await key(character, character);
-                    if (style === 'typo' && index === 2) {
-                        await key(/[0-9]/.test(character) ? '9' : 'x', /[0-9]/.test(character) ? '9' : 'x');
-                        await key('Backspace');
-                    }
+            for (const [index, character] of [...text].entries()) {
+                await key(character, character);
+                if (style === 'typo' && index === 2) {
+                    await key(/[0-9]/.test(character) ? '9' : 'x', /[0-9]/.test(character) ? '9' : 'x');
+                    await key('Backspace');
                 }
-                return;
             }
-            for (const piece of text.match(/[A-Za-z]+|[^A-Za-z]/g)) {
-                if (!/[A-Za-z]/.test(piece)) {
-                    await page('Input.insertText', { text: piece });
-                    await wait(gap);
-                    continue;
-                }
-                const composed =
-                    style === 'correct' && piece.length > 2 ? piece.slice(0, -2) + piece.at(-1) + piece.at(-2) : piece;
-                for (let length = 1; length <= composed.length; length++) {
-                    await page('Input.imeSetComposition', {
-                        text: composed.slice(0, length),
-                        selectionStart: length,
-                        selectionEnd: length,
-                    });
-                    await wait(gap);
-                }
-                await page('Input.insertText', { text: piece });
-                await wait(gap);
-            }
-        },
-        /** Moves the keyboard's cursor by `steps` characters, one at a time, like a finger dragging on the space bar. */
-        async moveCaret(steps, gap = 60) {
-            for (let step = 0; step < Math.abs(steps); step++) {
-                await evaluate(
-                    `(() => { const field = document.querySelector('#editor-text'), at = field.selectionStart + ${Math.sign(steps)}; field.setSelectionRange(at, at); })()`
-                );
-                await wait(gap);
-            }
-        },
-        /** Presses Backspace (lifting the finger after a Backspace swipe deletes what it selected) or Enter. */
-        async press(name) {
-            const key = { key: name, code: name, windowsVirtualKeyCode: name === 'Enter' ? 13 : 8 };
-            if (name === 'Enter') Object.assign(key, { text: '\r', unmodifiedText: '\r' });
-            await page('Input.dispatchKeyEvent', { type: 'keyDown', ...key });
-            await page('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
         },
         /** A click from the trackpad: the app hears it, the PC never gets it (the check's fake, see startPhone). */
         async click() {
@@ -410,21 +376,9 @@ async function startPhone(host) {
             );
             await wait(400);
         },
-        /** Commits text at once, as Gboard commits an emoji, a suggestion or its clipboard. */
-        async insert(text) {
-            await page('Input.insertText', { text });
-            await wait(60);
-        },
-        /** Selects the `count` characters before the cursor, as Gboard's Backspace swipe does. */
-        async selectBack(count) {
-            await evaluate(
-                `(() => { const field = document.querySelector('#editor-text'), end = field.selectionEnd; field.setSelectionRange(end - ${count}, end); })()`
-            );
-            await wait(100);
-        },
         /** Resolves once the phone has sent nothing for `quiet` ms and every message has its answer. */
-        async settle(quiet = 1500, ms = 20000) {
-            for (const end = Date.now() + ms; Date.now() < end; await wait(100)) {
+        async quiet(quiet = 250, ms = 15000) {
+            for (const end = Date.now() + ms; Date.now() < end; await wait(50)) {
                 const state = await evaluate(`(() => {
                     // Reads go on all the time: only what changes the PC (and its answer) counts.
                     const log = window.__log;
@@ -437,6 +391,10 @@ async function startPhone(host) {
             }
             throw new Error('The phone never settled');
         },
+        view: () =>
+            evaluate(
+                `({ text: document.querySelector('#editor-text').value.replaceAll(${JSON.stringify(anchor)}, ''), blind: ${editor}.view.blind })`
+            ),
         state: () =>
             evaluate(
                 `({ text: document.querySelector('#editor-text').value.replaceAll(${JSON.stringify(anchor)}, ''), blind: ${editor}.view.blind, readable: ${editor}.view.readable, kind: ${editor}.view.kind, log: window.__log, renders: window.__renders, now: performance.now() })`
@@ -450,73 +408,196 @@ async function startPhone(host) {
     };
 }
 
-const typingModes = {
-    keys: { style: 'keys', gap: 40 },
-    ime: { style: 'ime', gap: 40 },
-    slow: { style: 'ime', gap: 250 },
-    typo: { style: 'typo', gap: 40 },
-    correct: { style: 'correct', gap: 40 },
-};
-// Scenarios, each in the fields that need it (caret: one can move in it, lines: it holds several lines, text: it
-// takes typed text, not only keys):
-// - move, reopen, swipe: Gboard's cursor moves (dragging on the space bar, one step per character) and its
-//   Backspace swipe (dragging left over Backspace selects words, lifting deletes them), within the text typed, and
-//   past it once the editor was closed and opened again (the phone then knows nothing of the field's text blind).
-// - unicode: accents and an emoji (two UTF-16 units), committed as Gboard commits them. emoji: Backspace on an emoji
-//   with a skin tone (four units, one character): it goes whole. lines: Enter between two lines. paste: a long text
-//   inserted at once (Gboard's clipboard).
+// Scenarios: steps the phone plays (see runCase), what the field must hold then (expected; the field's own typed
+// and expected text when absent), and what a field needs for it (caret: one can move in it; text: it takes typed
+// text, not only keys; lines: it holds several; pcCaret: the check can move the PC's caret; sync: the app can change
+// its text; emoji: it shows emojis as inline images). listed: only in fields that name it (typing styles matter
+// only where the field transforms or answers typing late). whole: typed blind, the phone must still show all of it.
+// No settle between the steps of a fast scenario: typing races the PC's answers.
 const pasted = Array(7).fill('The quick brown fox jumps over the lazy dog.').join(' ');
 const scenarios = {
-    unicode: {
+    // Smoke: can the field be typed into with Gboard, and does it hold what it should.
+    smoke: { steps: [['typed', 'ime']] },
+    // Typing styles: a hardware keyboard, a typo erased, Gboard slowly (late answers show), autocorrected words.
+    keys: { listed: true, steps: [['typed', 'keys']] },
+    typo: { listed: true, steps: [['typed', 'typo']] },
+    slow: { listed: true, steps: [['typed', 'ime', 250]] },
+    correct: { listed: true, steps: [['typed', 'correct']] },
+    // Special characters: accents composed, a combining accent, a ZWJ family and a skin tone committed whole.
+    accents: {
         needs: ['caret', 'text'],
         steps: [
-            ['insert', 'café '],
-            ['insert', '😀'],
-            ['insert', ' ok'],
+            ['type', 'déjà vu '],
+            ['commit', 'é '],
+            ['commit', '👨‍👩‍👧 👍🏽'],
         ],
-        expected: 'café 😀 ok',
+        expected: 'déjà vu é 👨‍👩‍👧 👍🏽',
     },
-    emoji: {
+    // Backspace erases an emoji whole, whatever its length in UTF-16 (a ZWJ family is 8 units).
+    'emoji-erase': {
         needs: ['caret', 'text'],
         steps: [
-            ['insert', 'ok 👍🏽'],
+            ['commit', 'ok 👍🏽 👨‍👩‍👧'],
+            ['key', 'Backspace'],
+            ['key', 'Backspace'],
             ['key', 'Backspace'],
         ],
         expected: 'ok ',
     },
+    // Replacements: autocorrection as each word is committed; a suggestion tapped on an earlier word, the caret
+    // going after it, typing going on there; typing over a selection.
+    autocorrect: { needs: 'text', steps: [['correct', 'quick brown fox']], expected: 'quick brown fox' },
+    suggestion: {
+        needs: ['caret', 'text'],
+        steps: [
+            ['type', 'teh cat'],
+            ['tap', 1],
+            ['replace', 'teh', 'the'],
+            ['type', ' big'],
+        ],
+        expected: 'the big cat',
+    },
+    'over-selection': {
+        needs: ['caret', 'text'],
+        steps: [
+            ['type', 'hello big world'],
+            ['select', 6, 9],
+            ['type', 'small'],
+        ],
+        expected: 'hello small world',
+    },
+    'double-space': {
+        needs: ['caret', 'text'],
+        steps: [['type', 'hello'], ['double-space'], ['type', 'next']],
+        expected: 'hello. next',
+    },
+    dictate: { needs: 'text', steps: [['dictate', 'hello there world']], expected: 'hello there world' },
+    paste: { needs: ['caret', 'text'], steps: [['commit', pasted]], expected: pasted },
+    // Selections: select all then erase and type; the Backspace swipe (whole words selected, deleted on lifting).
+    'select-all': {
+        needs: 'caret',
+        steps: [['type', 'one two'], ['select-all'], ['key', 'Backspace'], ['type', 'fresh']],
+        expected: 'fresh',
+    },
+    swipe: {
+        needs: 'caret',
+        steps: [
+            ['type', 'hello big world'],
+            ['swipe', 2],
+            ['type', 'there'],
+        ],
+        expected: 'hello there',
+    },
+    // The space bar's cursor, fast (three characters a step) to the left, slower to the right.
+    drag: {
+        needs: 'caret',
+        steps: [
+            ['type', 'hello wide world'],
+            ['drag', -11, { per: 3, gap: 20 }],
+            ['type', ','],
+            ['drag', 5, { per: 2, gap: 40 }],
+            ['type', '!'],
+        ],
+        expected: 'hello, wide! world',
+    },
+    // Concurrency: typing with no pause at all; a swipe right after typing, before the PC answered it.
+    burst: { needs: 'text', steps: [['type', 'the quick brown fox jumps', 0]], expected: 'the quick brown fox jumps' },
+    race: {
+        needs: 'caret',
+        fast: true,
+        steps: [
+            ['type', 'hello big world', 10],
+            ['swipe', 1, 30],
+            ['type', 'there', 10],
+        ],
+        expected: 'hello big there',
+    },
+    // Line breaks: a blank line between two; Enter at the start, then two at the end, typing on the last blank line;
+    // a selection across lines typed over; select all with a blank line last.
     lines: {
         needs: 'lines',
         steps: [
             ['type', 'one'],
             ['key', 'Enter'],
-            ['type', 'two'],
+            ['key', 'Enter'],
+            ['type', 'three'],
         ],
-        expected: 'one\ntwo',
+        expected: 'one\n\nthree',
     },
-    paste: { needs: 'caret', steps: [['insert', pasted]], expected: pasted },
-    move: {
-        needs: 'caret',
+    'line-edges': {
+        needs: 'lines',
         steps: [
-            ['type', 'hello world'],
-            ['move', -6],
-            ['type', ','],
+            ['type', 'body'],
+            ['tap', 0],
+            ['key', 'Enter'],
+            ['tap', 'end'],
+            ['key', 'Enter'],
+            ['key', 'Enter'],
+            ['type', 'end'],
         ],
-        expected: 'hello, world',
+        expected: '\nbody\n\nend',
     },
-    reopen: {
-        needs: 'caret',
-        steps: [['type', 'hello world'], ['reopen'], ['move', -6], ['type', ',']],
-        expected: 'hello, world',
+    'select-lines': {
+        needs: 'lines',
+        steps: [
+            ['type', 'one'],
+            ['key', 'Enter'],
+            ['type', 'two'],
+            ['key', 'Enter'],
+            ['type', 'three'],
+            ['select', 2, 10],
+            ['type', 'X'],
+        ],
+        expected: 'onXree',
     },
-    // A click on the PC puts its caret after "hello": into the text typed blind (the phone follows) or somewhere it
-    // cannot tell (the phone starts afresh); typing goes on at the PC's caret either way.
+    'blank-end': {
+        needs: 'lines',
+        steps: [
+            ['type', 'top'],
+            ['key', 'Enter'],
+            ['key', 'Enter'],
+        ],
+        expected: 'top\n\n',
+    },
+    'select-all-lines': {
+        needs: 'lines',
+        steps: [['type', 'a'], ['key', 'Enter'], ['key', 'Enter'], ['select-all'], ['type', 'z']],
+        expected: 'z',
+    },
+    // Sync: the app changes the text (another device, a reply), blank lines included; the phone shows it and typing
+    // goes on in it. A click on the PC moves its caret into the text typed (the phone follows, or starts afresh).
+    sync: {
+        needs: 'sync',
+        steps: [
+            ['content', ['first', '', 'second']],
+            ['tap', 'end'],
+            ['type', ' more'],
+        ],
+        expected: 'first\n\nsecond more',
+    },
+    'sync-blank-end': {
+        needs: ['sync', 'lines'],
+        steps: [
+            ['content', ['top', '', '']],
+            ['tap', 'end'],
+            ['type', 'x'],
+        ],
+        expected: 'top\n\nx',
+    },
     click: {
         needs: 'pcCaret',
         steps: [['type', 'hello world'], ['pcCaret', 5], ['click'], ['type', ',']],
         expected: 'hello, world',
     },
+    // Closed and opened again: the phone knows nothing of a blind field's text, and moves past it.
+    reopen: {
+        needs: 'caret',
+        steps: [['type', 'hello world'], ['reopen'], ['drag', -6], ['type', ',']],
+        expected: 'hello, world',
+    },
     // Typed blind, the text stays on the phone as long as the PC's focus and caret stay with it, polls going on.
     linger: {
+        listed: true,
         needs: 'caret',
         steps: [
             ['type', 'hello world'],
@@ -525,15 +606,35 @@ const scenarios = {
         expected: 'hello world',
         whole: true,
     },
-    swipe: {
-        needs: 'caret',
+    // Inline emoji images (Discord): typing after one, two side by side with a space, Backspace erasing one whole.
+    // Chrome names no emoji image (Discord's app does): the phone shows each as a dotted square here, so what names
+    // do (a tap selects one, the space bar's cursor crosses it) is left to the unit tests (coverObjects).
+    'emoji-after': {
+        needs: 'emoji',
         steps: [
-            ['type', 'hello big world'],
-            ['select', 5],
-            ['key', 'Backspace'],
-            ['type', 'there'],
+            ['content', ['hi :smile:']],
+            ['tap', 'end'],
+            ['type', ' there'],
         ],
-        expected: 'hello big there',
+        expected: 'hi :smile: there',
+    },
+    'emoji-pair': {
+        needs: 'emoji',
+        steps: [
+            ['content', [':smile: :wave:']],
+            ['tap', 'end'],
+            ['type', ' ok'],
+        ],
+        expected: ':smile: :wave: ok',
+    },
+    'emoji-backspace': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['ok :smile:']],
+            ['tap', 'end'],
+            ['key', 'Backspace'],
+        ],
+        expected: 'ok ',
     },
 };
 
@@ -570,6 +671,22 @@ function summarize(log) {
 }
 
 const results = [];
+/** The scenarios a field gets: smoke, then its edge tier (see scenarios), narrowed by --mode. */
+function scenariosFor(entry, target) {
+    // text: fields take typed text, not only keys (all but the keys-only terminal).
+    const has = (need) => (need === 'text' ? entry.text !== false : entry[need]);
+    const edge = tiers.includes('edge') && (!quick || (target === 'chrome' && quickEdge.includes(entry.id)));
+    return Object.entries(scenarios)
+        .filter(([name, scenario]) =>
+            name === 'smoke' ? tiers.includes('smoke')
+            : !edge || !entry.edge ? false
+            : entry.edge === true ? !scenario.listed && [scenario.needs ?? []].flat().every(has)
+            : entry.edge.includes(name) && [scenario.needs ?? []].flat().every(has)
+        )
+        .map(([name]) => name)
+        .filter((name) => !onlyModes || onlyModes.includes(name));
+}
+
 async function runCase({
     target,
     entry,
@@ -579,73 +696,104 @@ async function runCase({
     phone,
     windows,
     moveCaret = () => Promise.reject(new Error('No PC caret here')),
+    content = () => Promise.reject(new Error('The app cannot change this field')),
     title = `${marker} ${entry.id}`,
 }) {
     const scenario = scenarios[mode];
-    // text: fields take typed text, not only keys (all but the keys-only terminal).
-    const has = (need) => (need === 'text' ? entry.text !== false : entry[need]);
-    if (scenario && ![scenario.needs].flat().every(has)) return;
     await focus(entry.id);
     await windows.ask({ do: 'bring', title });
     // A window coming to the foreground can give the focus back to its first field (WinForms): focus again.
     await focus(entry.id);
-    await wait(150);
-    if (scenario)
-        entry = {
-            ...entry,
-            typed: scenario.steps.find(([step]) => step === 'type' || step === 'insert')[1],
-            expected: scenario.expected,
-            check: null,
-        };
+    await wait(100);
+    // A typing scenario types the field's own text; the others their own.
+    const typing = !('expected' in scenario);
+    const expected = typing ? entry.expected : scenario.expected;
+    const check = typing && entry.check ? entry.check : (got) => got === expected;
+    // The phone shows the PC's text, or what was typed blind: all of it, or its end once the focus moved on (a code's
+    // next box). Moving the caret or deleting leaves only part of the text blind: any part of the final text.
+    // Chrome names no emoji image: the phone shows a dotted square for one, Slate's anchor beside it.
+    const plain = (text) => (entry.emoji ? text.replace(/:[a-z0-9_+-]+:/g, '⬚').replace(/﻿*⬚﻿*/g, '⬚') : text);
+    const echoes = ({ text, blind }, got) =>
+        blind ?
+            scenario.whole ? text === expected
+            : typing ? entry.typed.endsWith(text)
+            : expected.includes(text)
+        : typing ? got.endsWith(text)
+        : plain(text) === plain(got);
+    const { gboard } = phone;
+    const steps = {
+        typed: (style, gap = 40) =>
+            style === 'ime' ? gboard.type(entry.typed, gap)
+            : style === 'correct' ? gboard.typeCorrected(entry.typed, gap)
+            : phone.keys(entry.typed, style, gap),
+        type: (text, gap) => gboard.type(text, gap),
+        correct: (text) => gboard.typeCorrected(text),
+        commit: (text) => gboard.commit(text),
+        dictate: (phrase) => gboard.dictate(phrase),
+        replace: (from, to) => gboard.replaceWord(from, to),
+        'double-space': () => gboard.doubleSpace(),
+        tap: (position) => gboard.tap(position),
+        drag: (count, options) => gboard.drag(count, options),
+        select: (start, end) => gboard.selectRange(start, end),
+        'select-all': () => gboard.selectAll(),
+        swipe: (count, gap) => gboard.swipeWords(count, gap),
+        key: (name) => gboard.key(name),
+        pcCaret: (position) => moveCaret(entry.id, position),
+        click: () => phone.click(),
+        idle: (ms) => wait(ms),
+        // The app's change shows on the phone before anything is typed in it.
+        content: async (lines) => {
+            await content(entry.id, lines);
+            const wanted = plain(lines.join('\n'));
+            for (const end = Date.now() + 5000; plain((await phone.view()).text) !== wanted; await wait(50))
+                if (Date.now() > end) throw new Error(`The phone never showed ${JSON.stringify(wanted)}`);
+        },
+        reopen: async () => {
+            await phone.quiet(400);
+            await phone.close();
+            await wait(300);
+            await phone.open();
+        },
+    };
     await phone.open();
     const started = performance.now();
-    let phoneState,
-        problem = '';
+    let problem = '',
+        got,
+        view;
     try {
-        if (!scenario) await phone.type(entry.typed, typingModes[mode].style, typingModes[mode].gap);
-        for (const [step, value] of scenario?.steps ?? []) {
-            if (step === 'type') await phone.type(value, 'keys', 40);
-            else if (step === 'insert') await phone.insert(value);
-            else if (step === 'pcCaret') await moveCaret(entry.id, value);
-            else if (step === 'click') await phone.click();
-            else if (step === 'move') await phone.moveCaret(value);
-            else if (step === 'select') await phone.selectBack(value);
-            else if (step === 'key') await phone.press(value);
-            else if (step === 'idle') await wait(value);
-            else if (step === 'reopen') {
-                await phone.settle();
-                await phone.close();
-                await wait(300);
-                await phone.open();
-            }
-            await phone.settle(400);
+        for (const [step, ...args] of scenario.steps) {
+            await steps[step](...args);
+            if (!scenario.fast) await phone.quiet();
         }
-        await phone.settle();
+        // Done as soon as the PC holds the expected text and the phone shows it, twice in a row (a letter arriving
+        // late would show in between); given up after a while.
+        for (let end = Date.now() + 8000, matched = 0; ; await wait(150)) {
+            await phone.quiet(200);
+            got = await value(entry.id);
+            view = await phone.view();
+            matched = check(got) && echoes(view, got) ? matched + 1 : 0;
+            if (matched === 2 || Date.now() > end) break;
+        }
     } catch (error) {
         problem = error.message;
     }
-    phoneState = await phone.state();
+    const phoneState = await phone.state();
     await phone.close().catch(() => {});
-    await wait(300);
-    const got = await value(entry.id);
+    got = await value(entry.id);
+    view ??= phoneState;
     const result = {
         target,
         id: entry.id,
         mode,
-        // The phone shows the PC's text, or what was typed blind: all of it, or its end once the focus moved on.
-        // Moving the caret or deleting leaves only part of the text on the phone: any part of the final text.
-        echo:
-            scenario?.whole && phoneState.blind ? phoneState.text === entry.expected
-            : scenario ? entry.expected.includes(phoneState.text)
-            : (phoneState.blind ? entry.typed : got).endsWith(phoneState.text),
+        echo: echoes(view, got),
         // The phone was told what the field takes (its keyboard), where the fixture names it.
         kind: !entry.kind || phoneState.kind === entry.kind,
-        pass: (entry.check ? entry.check(got) : got === entry.expected) && !problem,
+        pass: check(got) && !problem,
         problem,
         got,
-        expected: entry.expected,
-        phone: phoneState.text,
-        blind: phoneState.blind,
+        expected,
+        phone: view.text,
+        blind: view.blind,
         sent: summarize(phoneState.log),
         latency: latencies(phoneState.log),
         // The PC's last answers to reads, for diagnosis (report only).
@@ -660,7 +808,7 @@ async function runCase({
     results.push(result);
     const mark = result.pass ? 'ok  ' : 'FAIL';
     console.log(
-        `${mark} ${target.padEnd(8)} ${entry.id.padEnd(10)} ${mode.padEnd(5)} ${result.blind ? 'blind' : 'read '} ${JSON.stringify(got)}${result.pass ? '' : ` ≠ ${JSON.stringify(entry.expected)}`}  phone ${JSON.stringify(result.phone)}  ${result.ms}ms`
+        `${mark} ${target.padEnd(8)} ${entry.id.padEnd(10)} ${mode.padEnd(16)} ${result.blind ? 'blind' : 'read '} ${JSON.stringify(got)}${result.pass ? '' : ` ≠ ${JSON.stringify(expected)}`}  phone ${JSON.stringify(result.phone)}  ${result.ms}ms`
     );
     if (problem) console.log(`       ${problem}`);
     if (result.errors.length) console.log(`       PC errors: ${result.errors.join(' | ')}`);
@@ -695,16 +843,19 @@ process.once('SIGINT', async () => {
 try {
     phone = await startPhone(host);
     const selected = (cases, target) =>
-        cases.filter(
-            (entry) =>
-                (!onlyCases || onlyCases.includes(entry.id))
-                && (!quick || option('case') || quickCases[target]?.includes(entry.id))
-        );
+        cases.filter((entry) => (!onlyCases || onlyCases.includes(entry.id)) && scenariosFor(entry, target).length);
     for (const target of targets) {
         // Windows' own Notepad, a fresh one for each run, on an empty test file named with the marker (its title).
         if (target === 'notepad') {
-            const entry = { id: 'notepad', typed: 'hello world', expected: 'hello world', caret: true, lines: true };
-            for (const mode of selected([entry], target).length ? modes : []) {
+            const entry = {
+                id: 'notepad',
+                typed: 'hello world',
+                expected: 'hello world',
+                caret: true,
+                lines: true,
+                edge: true,
+            };
+            for (const mode of selected([entry], target).length ? scenariosFor(entry, target) : []) {
                 const file = path.join(tmpdir(), `${marker}-notepad.txt`);
                 await writeFile(file, '');
                 const notepad = spawn('notepad.exe', [file], { stdio: 'ignore' });
@@ -736,7 +887,15 @@ try {
                 console.log('vscode: not installed, skipped');
                 continue;
             }
-            const entry = { id: 'editor', typed: 'hello world', expected: 'hello world', caret: true, lines: true };
+            // Typed blind: the scenarios where the phone has to know what it typed.
+            const entry = {
+                id: 'editor',
+                typed: 'hello world',
+                expected: 'hello world',
+                caret: true,
+                lines: true,
+                edge: ['drag', 'reopen', 'lines'],
+            };
             if (!selected([entry], target).length) continue;
             const profile = await temp('vscode');
             const file = path.join(profile, `${marker}-vscode.txt`);
@@ -785,7 +944,7 @@ try {
             );
             const title = `${marker}-vscode`;
             try {
-                for (const mode of modes)
+                for (const mode of scenariosFor(entry, target))
                     await runCase({
                         target,
                         entry,
@@ -808,7 +967,7 @@ try {
                         },
                         // VS Code saves Windows line breaks.
                         value: async () => {
-                            await wait(500);
+                            await wait(300);
                             return (await readFile(file, 'utf8')).replaceAll('\r\n', '\n');
                         },
                     });
@@ -822,7 +981,7 @@ try {
         if (target in nativeCases) {
             await windows.ask({ do: 'open', window: target, marker });
             for (const entry of selected(nativeCases[target], target))
-                for (const mode of modes)
+                for (const mode of scenariosFor(entry, target))
                     await runCase({
                         target,
                         entry,
@@ -844,7 +1003,7 @@ try {
         try {
             const cases = selected(await fixture.cases(), target);
             for (const entry of cases)
-                for (const mode of modes)
+                for (const mode of scenariosFor(entry, target))
                     await runCase({
                         target,
                         entry,
@@ -854,10 +1013,11 @@ try {
                         focus: (id) => fixture.command({ do: 'focus', id }),
                         value: (id) => fixture.command({ do: 'value', id }).then((reply) => reply.value),
                         moveCaret: (id, position) => fixture.command({ do: 'caret', id, position }),
+                        content: (id, lines) => fixture.command({ do: 'content', id, lines }),
                     });
             // Last: once the address bar has the focus, the page cannot take it back by itself.
             for (const entry of selected(addressCases, target))
-                for (const mode of modes)
+                for (const mode of scenariosFor(entry, target))
                     await runCase({
                         target,
                         entry,

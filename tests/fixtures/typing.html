@@ -4,6 +4,11 @@
         <meta charset="utf-8" />
         <title>Typing fixtures</title>
         <style>
+            .editor [contenteditable] {
+                min-height: 3em;
+                padding: 4px;
+                border: 1px solid #888;
+            }
             body {
                 margin: 16px;
                 font:
@@ -44,15 +49,25 @@
     <body>
         <!--
             Fields the phone types into for real through the host (tests/checks/typing-check.mjs), each with what the
-            keyboard types (data-typed) and what the field must end up holding (data-expected). Some read back as
+            keyboard types (data-typed) and what the field must end up holding (data-expected), and its edge tier
+            (data-edge: every scenario it can take, or those it names; smoke only without it). Some read back as
             text on the phone, some only blind (the proxy and terminal kinds), some change the typing (masks), some
             move the focus while typed into (rebuild, otp), some answer late (delayed).
         -->
-        <section data-case="input" data-caret data-pc-caret data-typed="hello world" data-expected="hello world">
+        <section
+            data-case="input"
+            data-edge="paste click"
+            data-caret
+            data-pc-caret
+            data-typed="hello world"
+            data-expected="hello world"
+        >
             <label>input</label><input data-field />
         </section>
         <section
             data-case="textarea"
+            data-edge
+            data-sync
             data-caret
             data-pc-caret
             data-lines
@@ -61,7 +76,14 @@
         >
             <label>textarea</label><textarea data-field rows="2"></textarea>
         </section>
-        <section data-case="editable" data-caret data-lines data-typed="hello world" data-expected="hello world">
+        <section
+            data-case="editable"
+            data-edge
+            data-caret
+            data-lines
+            data-typed="hello world"
+            data-expected="hello world"
+        >
             <label>contenteditable</label>
             <div data-field contenteditable></div>
         </section>
@@ -75,10 +97,16 @@
         <section data-case="number" data-kind="number" data-typed="12345" data-expected="12345">
             <label>number</label><input data-field type="number" />
         </section>
-        <section data-case="upper" data-typed="hello" data-expected="HELLO" data-mask="upper">
+        <section data-case="upper" data-edge="typo" data-typed="hello" data-expected="HELLO" data-mask="upper">
             <label>mask: uppercase</label><input data-field />
         </section>
-        <section data-case="phone" data-typed="0612345678" data-expected="06 12 34 56 78" data-mask="phone">
+        <section
+            data-case="phone"
+            data-edge="typo slow"
+            data-typed="0612345678"
+            data-expected="06 12 34 56 78"
+            data-mask="phone"
+        >
             <label>mask: phone</label><input data-field inputmode="tel" />
         </section>
         <section data-case="date" data-typed="02102026" data-expected="02/10/2026" data-mask="date">
@@ -90,16 +118,35 @@
         <section data-case="digits" data-typed="a1b2c3" data-expected="123" data-mask="digits">
             <label>mask: digits only</label><input data-field />
         </section>
-        <section data-case="maxlength" data-typed="hello world" data-expected="hello">
+        <section data-case="maxlength" data-edge="typo" data-typed="hello world" data-expected="hello">
             <label>maxlength 5</label><input data-field maxlength="5" />
         </section>
-        <section data-case="complete" data-typed="apple pie" data-expected="apple pie" data-mask="complete">
+        <section
+            data-case="complete"
+            data-edge="keys typo slow correct"
+            data-typed="apple pie"
+            data-expected="apple pie"
+            data-mask="complete"
+        >
             <label>inline completion</label><input data-field />
         </section>
-        <section data-case="delayed" data-typed="hello" data-expected="hello" data-mask="delayed">
+        <section
+            data-case="delayed"
+            data-edge="typo slow burst swipe drag race"
+            data-typed="hello"
+            data-expected="hello"
+            data-mask="delayed"
+        >
             <label>late answer (600 ms)</label><input data-field />
         </section>
-        <section data-case="code-line" data-caret data-pc-caret data-typed="hello world" data-expected="hello world">
+        <section
+            data-case="code-line"
+            data-edge
+            data-caret
+            data-pc-caret
+            data-typed="hello world"
+            data-expected="hello world"
+        >
             <label>code editor line (hidden input holding it)</label>
             <textarea
                 data-field
@@ -111,6 +158,7 @@
         </section>
         <section
             data-case="proxy"
+            data-edge="drag reopen click typo emoji-erase linger"
             data-caret
             data-pc-caret
             data-typed="hello world"
@@ -123,6 +171,7 @@
         </section>
         <section
             data-case="terminal"
+            data-edge="drag typo"
             data-pc-caret
             data-caret
             data-keys-only
@@ -133,10 +182,10 @@
             <label>terminal (keys only)</label>
             <div class="screen" data-field data-terminal tabindex="0"></div>
         </section>
-        <section data-case="rebuild" data-typed="hello" data-expected="hello" data-mask="rebuild">
+        <section data-case="rebuild" data-edge="typo slow" data-typed="hello" data-expected="hello" data-mask="rebuild">
             <label>rebuilt after a key</label><input data-field />
         </section>
-        <section data-case="otp" data-typed="123456" data-expected="123456">
+        <section data-case="otp" data-edge="typo slow" data-typed="123456" data-expected="123456">
             <label>code, one box per digit</label>
             <div class="otp" data-field data-otp>
                 <input maxlength="1" /><input maxlength="1" /><input maxlength="1" /><input maxlength="1" /><input
@@ -144,6 +193,36 @@
                 /><input maxlength="1" />
             </div>
         </section>
+        <!-- Real editors (tests/fixtures/editors.js, bundled by the check): their own code handles Enter, Backspace,
+             blank lines and emojis. -->
+        <section
+            data-case="tiptap"
+            data-edge
+            data-caret
+            data-pc-caret
+            data-lines
+            data-rich
+            data-typed="hello world"
+            data-expected="hello world"
+        >
+            <label>tiptap (ProseMirror), as Claude Desktop's prompt box</label>
+            <div class="editor" data-field data-editor="tiptap"></div>
+        </section>
+        <section
+            data-case="slate"
+            data-edge
+            data-caret
+            data-pc-caret
+            data-lines
+            data-rich
+            data-emoji
+            data-typed="hello world"
+            data-expected="hello world"
+        >
+            <label>Slate with emoji images, as Discord's message box</label>
+            <div class="editor" data-field data-editor="slate"></div>
+        </section>
+        <script type="module" src="/editors.js"></script>
         <script>
             const sectionOf = (id) => document.querySelector(`[data-case="${id}"]`);
             const fieldOf = (id) => sectionOf(id).querySelector('[data-field]');
@@ -289,11 +368,15 @@
             }
             document.querySelectorAll('[data-case]').forEach(setUp);
             // Where a click on the field would put the focus: the first box of a code, the field itself otherwise.
+            // A real editor (editors.js) answers for its field.
+            const editorOf = (id) => window.fixtureEditors?.[id];
             const focusTarget = (id) => {
+                if (editorOf(id)) return editorOf(id).element();
                 const field = fieldOf(id);
                 return 'otp' in field.dataset ? field.querySelector('input') : field;
             };
             function clear(id) {
+                if (editorOf(id)) return editorOf(id).clear();
                 const section = sectionOf(id);
                 // A rebuilt field starts over as a fresh element, which rebuilds itself again on its first key.
                 if (section.dataset.mask === 'rebuild') {
@@ -309,6 +392,7 @@
                 section.caret = 0;
             }
             function value(id) {
+                if (editorOf(id)) return editorOf(id).value();
                 const section = sectionOf(id);
                 const field = fieldOf(id);
                 if ('screen' in section.dataset) return section.querySelector('.screen').textContent;
@@ -324,6 +408,10 @@
             if (harness)
                 (async () => {
                     document.title = `Typing fixtures ${harness}`;
+                    // The real editors mount once their module has loaded.
+                    const editorCount = document.querySelectorAll('[data-editor]').length;
+                    while (Object.keys(window.fixtureEditors ?? {}).length < editorCount)
+                        await new Promise((resolve) => setTimeout(resolve, 50));
                     let current = null;
                     addEventListener(
                         'focus',
@@ -334,6 +422,14 @@
                         typed: section.dataset.typed,
                         expected: section.dataset.expected,
                         caret: 'caret' in section.dataset,
+                        rich: 'rich' in section.dataset,
+                        // The app can change its text (the content command).
+                        sync: 'rich' in section.dataset || 'sync' in section.dataset,
+                        // Its edge tier: every scenario it can take, or those it names.
+                        edge:
+                            'edge' in section.dataset
+                            && (section.dataset.edge ? section.dataset.edge.split(' ') : true),
+                        emoji: 'emoji' in section.dataset,
                         lines: 'lines' in section.dataset,
                         pcCaret: 'pcCaret' in section.dataset,
                         kind: section.dataset.kind,
@@ -354,7 +450,16 @@
                             reply = { focused: command.id, hasFocus: document.hasFocus() };
                         } else if (command.do === 'value') reply = { value: value(command.id) };
                         // A click on the PC moving the caret (the phone's own clicks never reach the PC in the check).
-                        else if (command.do === 'caret') {
+                        else if (command.do === 'caret' && editorOf(command.id)) {
+                            editorOf(command.id).caret(command.position);
+                            reply = { caret: command.position };
+                        }
+                        // The app itself changes the field's text (another device, a reply): lines, ":name:" an emoji.
+                        else if (command.do === 'content') {
+                            if (editorOf(command.id)) editorOf(command.id).setContent(command.lines);
+                            else fieldOf(command.id).value = command.lines.join('\n');
+                            reply = { value: value(command.id) };
+                        } else if (command.do === 'caret') {
                             const field = fieldOf(command.id),
                                 section = sectionOf(command.id);
                             if ('value' in field && !('proxy' in field.dataset))

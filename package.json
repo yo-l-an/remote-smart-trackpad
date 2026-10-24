@@ -31,10 +31,18 @@
     },
     "devDependencies": {
         "@resvg/resvg-js": "2.6.2",
+        "@tiptap/core": "3.32.0",
+        "@tiptap/starter-kit": "3.32.0",
         "@xeonlink/prettier-plugin-organize-attributes": "^1.1.0",
         "esbuild": "0.28.2",
         "prettier": "^3.8.1",
         "prettier-plugin-css-order": "^2.2.0",
-        "prettier-plugin-multiline-arrays": "^4.1.4"
+        "prettier-plugin-multiline-arrays": "^4.1.4",
+        "react": "19.3.1",
+        "react-dom": "19.3.1",
+        "slate": "0.146.0",
+        "slate-dom": "0.147.3",
+        "slate-history": "0.144.0",
+        "slate-react": "0.147.3"
     }
 }
