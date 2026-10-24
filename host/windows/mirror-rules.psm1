@@ -100,7 +100,9 @@ without one), which counts as one character, as on the PC: its caret stops only 
 start, end (the caret and selection in it). Answers text, start and end as the phone gets them; objects, the
 [start, end] of each object in that text; and rawAt: rawAt[i] is where the phone's position i stands in the reported
 text, an object's start for a position inside it (null when the text holds no such object). A caret inside an
-object's lines stands after it.
+object's lines stands after it. The editor's zero-width anchors (U+FEFF: Slate's in an empty line, and beside an
+object at a line's start or end) are no text the field shows: the phone gets none, so a blank line is empty there and
+typing after an emoji types nothing but what was typed.
 #>
 # The line break after the anchor shows only when nothing follows on its line (a space between two emojis does); an
 # object right after another shares that one's break instead of opening its own.
@@ -108,20 +110,20 @@ $inlineObject = '(?:\n|(?<=\uFEFF\n))\uFFFC\n(?:([^\n\uFFFC]*)\n)??\uFEFF\n?'
 function Get-InlineObjectView($facts) {
     $text = [string]$facts.text
     $found = [regex]::Matches($text, $inlineObject)
-    if (-not $found.Count) { return @{ text=$text; start=[int]$facts.start; end=[int]$facts.end; objects=@(); rawAt=$null } }
+    if (-not $found.Count -and $text.IndexOf([char]0xFEFF) -lt 0) { return @{ text=$text; start=[int]$facts.start; end=[int]$facts.end; objects=@(); rawAt=$null } }
     $view = New-Object System.Text.StringBuilder
     $rawAt = New-Object 'System.Collections.Generic.List[int]'
     $objects = New-Object 'System.Collections.Generic.List[object]'
     $from = 0
     foreach ($object in $found) {
-        for ($index = $from; $index -lt $object.Index; $index++) { $rawAt.Add($index); [void]$view.Append($text[$index]) }
+        for ($index = $from; $index -lt $object.Index; $index++) { if ($text[$index] -ne [char]0xFEFF) { $rawAt.Add($index); [void]$view.Append($text[$index]) } }
         $name = $object.Groups[1].Value.Trim()
         if (-not $name -or $name.Length -gt 64) { $name = [string][char]0x2B1A }
         $objects.Add(@($view.Length, ($view.Length + $name.Length)))
         foreach ($character in $name.ToCharArray()) { $rawAt.Add($object.Index); [void]$view.Append($character) }
         $from = $object.Index + $object.Length
     }
-    for ($index = $from; $index -lt $text.Length; $index++) { $rawAt.Add($index); [void]$view.Append($text[$index]) }
+    for ($index = $from; $index -lt $text.Length; $index++) { if ($text[$index] -ne [char]0xFEFF) { $rawAt.Add($index); [void]$view.Append($text[$index]) } }
     $rawAt.Add($text.Length)
     $at = $rawAt.ToArray()
     # The first position of the view at or after a reported one: an object's start, or past it.

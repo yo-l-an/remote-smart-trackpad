@@ -337,15 +337,16 @@ test('inline objects: shown by their names, one caret step each', { skip: !windo
     const view = (text, start = text.length, end = start) => ask('Get-InlineObjectView', { text, start, end });
     // Read from Discord's message box: the emoji image's alt text sits on a line of its own.
     const discord = await view(`Test \n${marker}\n:sweat_smile:\n${anchor}\n${anchor}`);
-    assert.equal(discord.text, `Test :sweat_smile:${anchor}`);
+    // The editor's zero-width anchor after it is no text the field shows: the phone gets none.
+    assert.equal(discord.text, `Test :sweat_smile:`);
     assert.deepEqual(discord.objects, [[5, 18]]);
-    assert.deepEqual([discord.start, discord.end], [19, 19]);
+    assert.deepEqual([discord.start, discord.end], [18, 18]);
     assert.deepEqual(discord.rawAt.slice(4, 8), [4, 5, 5, 5]);
-    assert.deepEqual(discord.rawAt.slice(-3), [5, 24, 25]);
+    assert.deepEqual(discord.rawAt.slice(-3), [5, 5, 25]);
     // Read from Chrome (tests/fixtures/placeholders.html, slate-emoji-*): no alt text, in the middle of a line and
     // at a line start.
     assert.equal((await view(`a \n${marker}\n${anchor}\n b`)).text, `a ${square} b`);
-    assert.equal((await view(`a\n${anchor}\n${marker}\n${anchor}\n b`)).text, `a\n${anchor}${square} b`);
+    assert.equal((await view(`a\n${anchor}\n${marker}\n${anchor}\n b`)).text, `a\n${square} b`);
     // Two emojis with a space between (Slate keeps it, pre-wrap): the anchor's line goes on with the space. Without
     // it, the second object shares the first one's line break.
     assert.equal(
@@ -381,13 +382,16 @@ ${anchor}`);
     assert.deepEqual(
         [pair.text, pair.objects],
         [
-            `:a: :b:${anchor}`,
+            `:a: :b:`,
             [
                 [0, 3],
                 [4, 7],
             ],
         ]
     );
+    // A blank line in Slate holds only an anchor: it is empty on the phone, a caret on it stays on it.
+    const blank = await view(`one\n${anchor}\nthree`, 4);
+    assert.deepEqual([blank.text, blank.start, blank.rawAt.slice(3, 6)], ['one\n\nthree', 4, [3, 5, 6]]);
     // A caret inside an object's lines stands after it; one before it stays before.
     const middle = `a \n${marker}\n${anchor}\n b`;
     assert.deepEqual([(await view(middle, 4)).start, (await view(middle, 2)).start], [3, 2]);
