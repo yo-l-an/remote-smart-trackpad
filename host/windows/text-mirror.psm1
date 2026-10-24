@@ -99,36 +99,51 @@ function Get-ElementKind($element, [string]$field) {
 }
 
 <#
-A ProseMirror field's paragraphs, for Get-ParagraphView: texts (each paragraph's, a lone line break for an empty one)
-and caret (the paragraph holding a collapsed caret, else -1). Null when nothing can be missing: as many paragraphs as
-the text has lines, or over 200 (reading each costs, on every read).
+A ProseMirror field's paragraphs, for Get-ParagraphView: elements, texts (each paragraph's, a lone line break for an
+empty one), and for each end of the selection the paragraph holding it and how far into it (startParagraph and
+startOffset, endParagraph and endOffset; -1 and null when unknown). Null over 200 paragraphs: each is read on every
+read of the field.
 #>
-function Get-Paragraphs($element, $pattern, [string]$text, $selection, [bool]$collapsed) {
+function Get-Paragraphs($element, $pattern, $selection) {
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
     $children = New-Object 'System.Collections.Generic.List[object]'
     for ($child = $walker.GetFirstChild($element); $null -ne $child; $child = $walker.GetNextSibling($child)) {
         $children.Add($child)
         if ($children.Count -gt 200) { return $null }
     }
-    if ($children.Count -le $text.Split("`n").Count) { return $null }
-    # The caret's paragraph: the element enclosing it, or the paragraph that element sits in.
-    $holders = @()
-    if ($collapsed) {
+    $headEdge = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start
+    $tailEdge = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::End
+    # One end of the selection, alone; the paragraph holding it (the element enclosing it, or the paragraph that
+    # element sits in), and its offset there: the text from the paragraph's start to it.
+    $locate = {
+        param($keep)
+        $found = @{ paragraph=-1; offset=$null }
         try {
-            $holder = $selection.GetEnclosingElement()
+            $point = $selection.Clone()
+            if ($keep -eq $headEdge) { $point.MoveEndpointByRange($tailEdge, $point, $headEdge) }
+            else { $point.MoveEndpointByRange($headEdge, $point, $tailEdge) }
+            $holder = $point.GetEnclosingElement()
             for ($depth = 0; $null -ne $holder -and $depth -lt 6 -and -not $holder.Equals($element); $depth++) {
-                $holders += $holder
+                for ($index = 0; $index -lt $children.Count; $index++) {
+                    if (-not $children[$index].Equals($holder)) { continue }
+                    $before = $pattern.RangeFromChild($children[$index])
+                    $before.MoveEndpointByRange($tailEdge, $point, $headEdge)
+                    $text = Normalize-MirrorText ($before.GetText(262145))
+                    return @{ paragraph=$index; offset=$(if ($text -ceq "`n") { 0 } else { $text.Length }) }
+                }
                 $holder = $walker.GetParent($holder)
             }
         } catch {}
+        return $found
     }
+    $first = & $locate $headEdge
+    $last = & $locate $tailEdge
     $texts = New-Object 'System.Collections.Generic.List[string]'
-    $caret = -1
-    for ($index = 0; $index -lt $children.Count; $index++) {
-        $texts.Add((Normalize-MirrorText ($pattern.RangeFromChild($children[$index]).GetText(262145))))
-        if ($caret -lt 0 -and @($holders | Where-Object { $_.Equals($children[$index]) }).Count) { $caret = $index }
+    foreach ($child in $children) { $texts.Add((Normalize-MirrorText ($pattern.RangeFromChild($child).GetText(262145)))) }
+    return @{
+        elements=$children.ToArray(); texts=$texts.ToArray()
+        startParagraph=$first.paragraph; startOffset=$first.offset; endParagraph=$last.paragraph; endOffset=$last.offset
     }
-    return @{ texts=$texts.ToArray(); caret=$caret }
 }
 
 function Read-MirrorOnce {
@@ -195,10 +210,14 @@ function Read-MirrorOnce {
     $objects = $null
     # ProseMirror (Claude Desktop, tiptap): its blank lines come back from its paragraphs (Get-ParagraphView).
     if ($framework -eq 'Chrome' -and -not $resolved.native -and $element.Current.ClassName -match '(^|\s)ProseMirror(\s|$)') {
-        $paragraphs = Get-Paragraphs $element $pattern $text $ranges[0] ($start -eq $end)
+        $paragraphs = Get-Paragraphs $element $pattern $ranges[0]
         if ($null -ne $paragraphs) {
-            $view = Get-ParagraphView @{ text=$text; start=$start; end=$end; paragraphs=$paragraphs.texts; caretParagraph=$paragraphs.caret }
-            if ($null -ne $view.rawAt) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$null } }
+            $view = Get-ParagraphView @{
+                text=$text; start=$start; end=$end; paragraphs=$paragraphs.texts
+                startParagraph=$paragraphs.startParagraph; startOffset=$paragraphs.startOffset
+                endParagraph=$paragraphs.endParagraph; endOffset=$paragraphs.endOffset
+            }
+            if ($null -ne $view.lines) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$null; lines=$view.lines; paragraphs=$paragraphs.elements } }
             $text = $view.text; $start = $view.start; $end = $view.end
         }
     }
@@ -245,9 +264,31 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
     if (-not $element.Equals($script:mirror.element)) { throw 'PC focus changed' }
     $pattern = $element.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern)
     $range = $pattern.DocumentRange.Clone()
+    $objects = $script:mirror.objects
+    # A ProseMirror field rebuilt from its paragraphs (Get-ParagraphView): around empty paragraphs, UI Automation's
+    # characters are not the text's (an extra stop at a paragraph's end), so each end is placed in its own paragraph,
+    # counting characters from that paragraph's start only. An empty paragraph is reached directly.
+    if ($null -ne $objects -and $null -ne $objects.lines -and $objects.text -ceq $text) {
+        $headEdge = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start
+        $tailEdge = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::End
+        $point = {
+            param([int]$position)
+            $paragraph = 0
+            while ($paragraph + 1 -lt $objects.lines.Length -and $objects.lines[$paragraph + 1] -le $position) { $paragraph++ }
+            $at = $pattern.RangeFromChild($objects.paragraphs[$paragraph])
+            $at.MoveEndpointByRange($tailEdge, $at, $headEdge)
+            $offset = $position - $objects.lines[$paragraph]
+            if ($offset -and $at.MoveEndpointByUnit($tailEdge, [System.Windows.Automation.Text.TextUnit]::Character, $offset) -ne $offset) { throw 'PC text range cannot be selected' }
+            $at.MoveEndpointByRange($headEdge, $at, $tailEdge)
+            return $at
+        }
+        $range = & $point $start
+        if ($end -ne $start) { $range.MoveEndpointByRange($tailEdge, (& $point $end), $headEdge) }
+        $range.Select()
+        return
+    }
     # With inline objects, the phone's positions stand in the reported text through rawAt (Get-InlineObjectView).
     $reported = $text; $rawStart = $start; $rawEnd = $end
-    $objects = $script:mirror.objects
     if ($null -ne $objects -and $objects.text -ceq $text) {
         $reported = $objects.raw; $rawStart = $objects.rawAt[$start]; $rawEnd = $objects.rawAt[$end]
     }

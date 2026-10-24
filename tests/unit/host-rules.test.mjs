@@ -291,6 +291,40 @@ test(
         assert.deepEqual([both.text, both.start], ['a\n\nb\n\n', 6]);
         assert.equal((await view('a\nb\n', ending, 4, 4)).text, 'a\n\nb\n\n');
         assert.equal((await view('a\nb\n', ['a', '\n', 'b', '\n'], 4, 3)).text, 'a\n\nb\n');
+        // Read from Claude Desktop: "ab", "cd", then three blank lines, the caret on the last one; each paragraph's
+        // line start, for placing the PC's caret paragraph by paragraph.
+        const last = await view('ab\ncd\n\n\n', ['ab', 'cd', '\n', '\n', '\n'], 7, 4);
+        assert.deepEqual([last.text, last.start, last.lines], ['ab\ncd\n\n\n', 8, [0, 3, 6, 7, 8]]);
+        // Select all over a text ending with a blank line (recorded): the selection's end sits in the last, empty
+        // paragraph, which only its paragraph tells apart from the line above.
+        const all = await ask('Get-ParagraphView', {
+            text: 'ceci est un test de \nzkrbens\n',
+            start: 0,
+            end: 28,
+            paragraphs: ['ceci est un test de ', 'zkrbens', '\n'],
+            startParagraph: 0,
+            endParagraph: 2,
+        });
+        assert.deepEqual([all.start, all.end, all.text.length], [0, 29, 29]);
+        // Each end placed by its paragraph and its offset there, whatever the field's text says: two blank lines
+        // between texts, which Chromium's text may not line up with, keep both; a caret on the last of several
+        // blank lines at the end stays on it.
+        const placed = (text, paragraphs, paragraph, offset, start = 0) =>
+            ask('Get-ParagraphView', {
+                text,
+                start,
+                end: start,
+                paragraphs,
+                startParagraph: paragraph,
+                startOffset: offset,
+                endParagraph: paragraph,
+                endOffset: offset,
+            });
+        const double = await placed('a\n\nb', ['a', '\n', '\n', 'b'], 2, 0);
+        assert.deepEqual([double.text, double.start, double.rawAt, double.lines], ['a\n\n\nb', 3, null, [0, 2, 3, 4]]);
+        assert.equal((await placed('a\n\nb', ['a', '\n', '\n', 'b'], 3, 1)).start, 5);
+        const trailing = await placed('ab\ncd\n\n\n', ['ab', 'cd', '\n', '\n', '\n'], 4, 0, 7);
+        assert.deepEqual([trailing.text, trailing.start], ['ab\ncd\n\n\n', 8]);
         // Nothing missing, or paragraphs that do not make up the text (a list holds lines of its own): left as it is.
         assert.equal((await view('a\nb', ['a', 'b'], 0)).rawAt, null);
         assert.equal((await view('a\nb\nc', ['a', '\n', 'b\nc\nd'], 0)).rawAt, null);

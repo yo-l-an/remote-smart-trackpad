@@ -468,6 +468,25 @@ second</textarea>
                 <p><br class="ProseMirror-trailingBreak" /></p>
             </div>
         </section>
+        <section data-case="prosemirror-double-blank" data-kind="content" data-expected="a&#10;&#10;&#10;b">
+            <h2>ProseMirror two blank lines between texts</h2>
+            <div data-field contenteditable class="tiptap ProseMirror" role="textbox">
+                <p>a</p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+                <p>b</p>
+            </div>
+        </section>
+        <section data-case="prosemirror-many-trailing" data-kind="content" data-expected="ab&#10;cd&#10;&#10;&#10;">
+            <h2>ProseMirror three blank lines at the end</h2>
+            <div data-field contenteditable class="tiptap ProseMirror" role="textbox">
+                <p>ab</p>
+                <p>cd</p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+            </div>
+        </section>
         <section data-case="rtl-content" data-kind="content" data-expected="שלום עולם">
             <h2>right-to-left text</h2>
             <div data-field contenteditable dir="rtl" class="css-empty" data-placeholder="כתוב הודעה">שלום עולם</div>

@@ -130,29 +130,30 @@ function Get-InlineObjectView($facts) {
 }
 
 <#
-Blank lines in ProseMirror fields (Claude Desktop, tiptap): Chromium leaves an empty paragraph out of the field's
-text, though it stays an element of its own. The text is rebuilt from the paragraphs, each on its line. Facts: text
-(the field's), start, end, paragraphs (each paragraph's text, a lone line break for an empty one) and caretParagraph
-(the paragraph holding a caret, -1 for a selection or when unknown). Answers text, start and end as the phone gets
-them, and rawAt as Get-InlineObjectView does; rawAt is null, and the text left as it is, unless the filled
-paragraphs make up the field's text exactly (a list holds several lines in one element) and one is empty. A caret
-in a known paragraph stands on its line; elsewhere a position goes to the first one at or after it.
+Blank lines in ProseMirror fields (Claude Desktop, tiptap): Chromium's text of the field drops or keeps its empty
+paragraphs depending on where they stand and how many follow each other, though each stays an element of its own. The
+text is rebuilt from the paragraphs instead, each on its line, whatever the field's text says. Facts: text (the
+field's), start, end, paragraphs (each paragraph's text, a lone line break for an empty one), and for each end of the
+selection the paragraph holding it and how far into it (startParagraph and startOffset, endParagraph and endOffset;
+caretParagraph names the paragraph of both, -1 or missing when unknown). Answers text, start and end as the phone gets
+them; lines, where each paragraph's line starts in that text; and rawAt as Get-InlineObjectView does when the
+field's text lines up with the paragraphs (null otherwise, and the text left as it is when no paragraph is empty). An
+end without its paragraph falls back on the field's text: the first position at or after it there, when they line up,
+else the text's start.
 #>
 function Get-ParagraphView($facts) {
     $raw = [string]$facts.text
     $texts = @(@($facts.paragraphs) | ForEach-Object { if ([string]$_ -ceq "`n") { '' } else { [string]$_ } })
     $filled = @($texts | Where-Object { $_.Length })
-    # Empty paragraphs at the end are the exception: Chromium writes a line break for each (some, once the mirror took
-    # off a final break the caret never reaches). Those breaks follow the filled paragraphs' text.
+    if ($filled.Count -eq $texts.Count) { return @{ text=$raw; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null; lines=$null } }
+    # How the field's text lines up with the paragraphs, when it does: Chromium writes no line break for an empty
+    # paragraph in the middle, and one for each at the end (once a final one is off, the mirror taking it away).
     $joined = $filled -join "`n"
     $lastFilled = -1
     for ($index = 0; $index -lt $texts.Count; $index++) { if ($texts[$index].Length) { $lastFilled = $index } }
     $tail = $raw.Length - $joined.Length
     $fits = $tail -ge 0 -and $raw.StartsWith($joined, [StringComparison]::Ordinal) -and
         $raw.Substring($joined.Length) -ceq ("`n" * $tail) -and $tail -le $texts.Count - 1 - $lastFilled
-    if ($filled.Count -eq $texts.Count -or -not $fits) {
-        return @{ text=$raw; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null }
-    }
     $view = New-Object System.Text.StringBuilder
     $rawAt = New-Object 'System.Collections.Generic.List[int]'
     $lineStarts = New-Object 'System.Collections.Generic.List[int]'
@@ -160,12 +161,9 @@ function Get-ParagraphView($facts) {
     $at = 0; $seenFilled = $false
     for ($index = 0; $index -lt $texts.Count; $index++) {
         if ($index) {
-            # The field's own line break sits right before a filled paragraph that follows another, and before the
-            # first empty paragraphs at the end (one each); the others are the empty paragraphs' lines, which the
-            # field's text lacks.
             $rawAt.Add($at); [void]$view.Append("`n")
             if ($seenFilled -and $texts[$index].Length) { $at++ }
-            elseif ($index -gt $lastFilled -and $tail) { $at++; $tail-- }
+            elseif ($index -gt $lastFilled -and $tail -gt 0) { $at++; $tail-- }
         }
         $lineStarts.Add($view.Length); $rawStarts.Add($at)
         foreach ($character in $texts[$index].ToCharArray()) { $rawAt.Add($at); [void]$view.Append($character); $at++ }
@@ -173,16 +171,28 @@ function Get-ParagraphView($facts) {
     }
     $rawAt.Add($at)
     $map = $rawAt.ToArray()
-    $paragraph = [int]$facts.caretParagraph
+    $known = { param($value) if ($null -ne $value) { [int]$value } else { -1 } }
+    $startParagraph = & $known $facts.startParagraph
+    $endParagraph = & $known $facts.endParagraph
+    if ($startParagraph -lt 0 -and $endParagraph -lt 0) { $startParagraph = $endParagraph = & $known $facts.caretParagraph }
     $position = {
-        param([int]$raw)
+        param([int]$raw, [int]$paragraph, $offset)
         if ($paragraph -ge 0 -and $paragraph -lt $texts.Count) {
-            return $lineStarts[$paragraph] + [Math]::Max(0, [Math]::Min($texts[$paragraph].Length, $raw - $rawStarts[$paragraph]))
+            # Measured in its paragraph; without it, from where the paragraph starts in the field's text.
+            $into = if ($null -ne $offset) { [int]$offset } elseif ($fits) { $raw - $rawStarts[$paragraph] } else { 0 }
+            return $lineStarts[$paragraph] + [Math]::Max(0, [Math]::Min($texts[$paragraph].Length, $into))
         }
+        if (-not $fits) { return 0 }
         for ($index = 0; $index -lt $map.Length; $index++) { if ($map[$index] -ge $raw) { return $index } }
         return $map.Length - 1
     }
-    return @{ text=$view.ToString(); start=(& $position $facts.start); end=(& $position $facts.end); rawAt=$map }
+    return @{
+        text=$view.ToString()
+        start=(& $position $facts.start $startParagraph $facts.startOffset)
+        end=(& $position $facts.end $endParagraph $facts.endOffset)
+        rawAt=$(if ($fits) { $map } else { $null })
+        lines=$lineStarts.ToArray()
+    }
 }
 
 <#
