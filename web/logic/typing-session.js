@@ -26,7 +26,8 @@ export function caretInEcho(echo, around, caret) {
  * module does the editing) or types blind into one the phone cannot read, and decides what the phone shows.
  *
  * Dependencies: send(action, data) → Promise (one PC command, in order); show(view), called whenever what the phone
- * shows changes; modifiers() → the modifier keys held on the phone; notice(error) for a command that failed; now().
+ * shows changes; modifiers() → the modifier keys held on the phone; notice(error) for a command that failed; now();
+ * tappedName() when a tap in a custom emoji's name put the caret beside it (see coverObjects).
  *
  * The view: { open, reading, readable, blind, singleLine, kind, error, reason, field, text, selectionStart,
  * selectionEnd, keep }. kind: what the PC's field takes (email, tel, url, search, number, digits, terminal or text),
@@ -47,6 +48,7 @@ export function createTypingSession({
     modifiers = () => [],
     notice = () => {},
     now = () => performance.now(),
+    tappedName = () => {},
 }) {
     let state = { open: false, reading: false, readable: false, text: '', selectionStart: 0, selectionEnd: 0 };
     let online = false,
@@ -67,7 +69,7 @@ export function createTypingSession({
             state = next;
             publish();
         },
-        { now, typingMovesFocus }
+        { now, typingMovesFocus, tappedName }
     );
     const view = () => ({
         open: state.open,

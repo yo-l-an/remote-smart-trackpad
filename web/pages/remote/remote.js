@@ -444,6 +444,8 @@ const session = createTypingSession({
     },
     modifiers: () => [...rows.held],
     notice: (error) => showNotice(error.message),
+    // A custom emoji's name (":party:") stands for an image on the PC: it goes whole, never letter by letter.
+    tappedName: () => showNotice("Custom emoji: works as one character, its name can't be edited", 3000),
 });
 editor.heldModifiers = () => [...rows.held];
 // The Keyboard options: capitals at the start of sentences, and a keyboard following the PC's field.

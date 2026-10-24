@@ -469,6 +469,8 @@ ${anchor}`);
     const objects = custom.objects;
     assert.deepEqual(await ask('Expand-ObjectEdit', { start: 16, end: 17, objects }), { start: 5, end: 17 });
     assert.deepEqual(await ask('Expand-ObjectEdit', { start: 2, end: 4, objects }), { start: 2, end: 4 });
+    // A caret placed inside one (nothing removed) never erases it.
+    assert.deepEqual(await ask('Expand-ObjectEdit', { start: 10, end: 10, objects }), { start: 10, end: 10 });
     const text = custom.text;
     assert.equal(await ask('Get-CaretSteps', { text, start: 5, end: 17, objects }), 1);
     assert.equal(await ask('Get-CaretSteps', { text, start: 2, end: 17, objects }), 4);

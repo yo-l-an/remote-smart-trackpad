@@ -236,38 +236,52 @@ test('typing that reaches a field after it moved the focus on (a code box) follo
     assert.equal(h.requests[0].data.session, 'box-3');
     assert.equal(h.requests[0].data.text, '2');
 });
-test('an inline object (an emoji name) is crossed in one step or selected whole, as on the PC', async () => {
+test('a caret never lands inside an inline object (an emoji): it goes to one of its sides', async () => {
     const objects = [[5, 18]];
-    assert.deepEqual(coverObjects(objects, 9, 9), [5, 18]);
-    assert.deepEqual(coverObjects(objects, 2, 9), [2, 18]);
-    assert.deepEqual(coverObjects(objects, 9, 19), [5, 19]);
-    // At its edges the caret stays.
-    assert.deepEqual(coverObjects(objects, 5, 5), [5, 5]);
-    assert.deepEqual(coverObjects(objects, 18, 18), [18, 18]);
-    // The space-bar cursor steps in from an edge: it crosses the name, to the right or to the left.
-    assert.deepEqual(coverObjects(objects, 6, 6, [5, 5]), [18, 18]);
-    assert.deepEqual(coverObjects(objects, 17, 17, [18, 18]), [5, 5]);
-    // From the name selected, the cursor goes to the edge it moved toward.
-    assert.deepEqual(coverObjects(objects, 16, 16, [5, 18]), [18, 18]);
-    assert.deepEqual(coverObjects(objects, 6, 6, [5, 18]), [5, 5]);
+    // A tap inside: to the nearer side, telling it was a tap.
+    assert.deepEqual(coverObjects(objects, 9, 9), [5, 5, true]);
+    assert.deepEqual(coverObjects(objects, 14, 14, [2, 2]), [18, 18, true]);
+    // A selection takes in each object an edge of it falls in, as it would a character.
+    assert.deepEqual(coverObjects(objects, 2, 9), [2, 18, false]);
+    assert.deepEqual(coverObjects(objects, 9, 19), [5, 19, false]);
+    assert.deepEqual(coverObjects(objects, 7, 9), [5, 18, false]);
+    // At its sides the caret stays.
+    assert.deepEqual(coverObjects(objects, 5, 5), [5, 5, false]);
+    assert.deepEqual(coverObjects(objects, 18, 18), [18, 18, false]);
+    // The space-bar cursor steps in from a side: it crosses the object, to the right or to the left.
+    assert.deepEqual(coverObjects(objects, 6, 6, [5, 5]), [18, 18, false]);
+    assert.deepEqual(coverObjects(objects, 17, 17, [18, 18]), [5, 5, false]);
     // Sliding fast, the cursor lands anywhere inside: it still crosses, in the direction it goes.
-    assert.deepEqual(coverObjects(objects, 12, 12, [3, 3], true), [18, 18]);
-    assert.deepEqual(coverObjects(objects, 8, 8, [20, 20], true), [5, 5]);
-    // A tap from elsewhere selects it.
-    assert.deepEqual(coverObjects(objects, 9, 9, [2, 2]), [5, 18]);
+    assert.deepEqual(coverObjects(objects, 12, 12, [3, 3], true), [18, 18, false]);
+    assert.deepEqual(coverObjects(objects, 8, 8, [20, 20], true), [5, 5, false]);
 
-    // A tap in the name selects it on the phone and on the PC.
-    const h = harness();
-    h.mirror.open();
-    await h.reply({ ...snapshot('Test :sweat_smile:'), objects });
-    h.mirror.input('Test :sweat_smile:', 9, 9);
-    assert.deepEqual([h.changes.at(-1).selectionStart, h.changes.at(-1).selectionEnd], [5, 18]);
-    const edit = h.requests.at(-1);
-    assert.equal(edit.action, 'mirror-edit');
-    assert.deepEqual([edit.data.selectionStart, edit.data.selectionEnd], [5, 18]);
+    // A tap in a custom emoji's name: the caret goes beside it on the phone and on the PC, and the phone tells why.
+    const requests = [],
+        changes = [];
+    let told = 0;
+    const mirror = createMirror(
+        (action, data) => new Promise((resolve) => requests.push({ action, data, resolve })),
+        (state) => changes.push(state),
+        { tappedName: () => told++ }
+    );
+    const reply = async (value) => {
+        requests.shift().resolve(value);
+        await new Promise((resolve) => setImmediate(resolve));
+    };
+    mirror.open();
+    await reply({ ...snapshot('Test :party_blob:'), objects: [[5, 17]] });
+    mirror.input('Test :party_blob:', 9, 9);
+    assert.deepEqual([changes.at(-1).selectionStart, changes.at(-1).selectionEnd], [5, 5]);
+    assert.deepEqual([requests.at(-1).data.selectionStart, requests.at(-1).data.selectionEnd], [5, 5]);
+    assert.equal(told, 1);
     // A field without objects forgets earlier ones.
-    await h.reply({ accepted: true, snapshot: snapshot('plain') });
-    assert.deepEqual(h.changes.at(-1).objects, []);
+    await reply({ accepted: true, snapshot: snapshot('plain') });
+    assert.deepEqual(changes.at(-1).objects, []);
+    // An emoji shown as itself (its parts, as a variation selector, are no stops): the caret goes beside it, quietly.
+    mirror.poll();
+    await reply({ ...snapshot('ok 👍️', 'field-a', 1), selectionStart: 0, selectionEnd: 0, objects: [[3, 6]] });
+    mirror.input('ok 👍️', 5, 5);
+    assert.deepEqual([changes.at(-1).selectionStart, told], [6, 1]);
 });
 test('a caret moved while a read is on its way is not undone by that read', async () => {
     const h = harness();

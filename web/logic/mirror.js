@@ -1,35 +1,39 @@
 import { nextReplacementStep, replacementFor } from './text-operations.js';
 
 /**
- * The caret or selection covering whole inline objects (objects: [start, end] of each, from the PC: Discord's emoji
- * names): the PC's caret stops only at their edges. A moving caret (the keyboard's space-bar cursor: moving, or one
- * step from an edge) crosses it, in the direction it goes; a caret landing inside from elsewhere (a tap) selects it;
- * a selection edge inside one takes in all of it. previous: the selection before, [start, end].
+ * The caret or selection around whole inline objects (objects: [start, end] of each, from the PC: an emoji image, shown
+ * as its emoji or a custom one by its name): the PC's caret stops only at their edges. A caret never lands inside one:
+ * moving (the keyboard's space-bar cursor: moving, or one step from an edge) it goes to the edge it moves toward,
+ * otherwise (a tap) to the nearer edge, and `tapped` tells it landed inside. A selection edge inside one takes in all of
+ * it, as a selection does a character. previous: the selection before, [start, end]. Answers [start, end, tapped].
  */
 export function coverObjects(objects = [], selectionStart, selectionEnd, previous = null, moving = false) {
     for (const [start, end] of objects) {
         const inside = (position) => position > start && position < end;
         if (selectionStart === selectionEnd && inside(selectionStart)) {
             const [from, to] = previous ?? [];
-            // From the object selected (a tap, then the cursor moved): to the edge it moved toward.
-            if (from === start && to === end)
-                return selectionStart - start > end - selectionStart ? [end, end] : [start, start];
             const stepped = from === to && (from === start || from === end) && Math.abs(selectionStart - from) === 1;
-            if ((moving || stepped) && from !== undefined) return selectionStart > from ? [end, end] : [start, start];
-            return [start, end];
+            if ((moving || stepped) && from !== undefined)
+                return selectionStart > from ? [end, end, false] : [start, start, false];
+            return selectionStart - start <= end - selectionStart ? [start, start, true] : [end, end, true];
         }
         if (inside(selectionStart)) selectionStart = start;
         if (inside(selectionEnd)) selectionEnd = end;
     }
-    return [selectionStart, selectionEnd];
+    return [selectionStart, selectionEnd, false];
 }
 
 /**
  * The mirror (CONTEXT.md) of a readable PC field: the phone's edits go to the PC, the PC's changes come back.
  * send(action, data) → Promise; render(state) on every change. now() and typingMovesFocus (ms): a focus change this
- * soon after the PC took typing comes from that typing (see the typing session).
+ * soon after the PC took typing comes from that typing (see the typing session). tappedName(): a tap landed in a
+ * custom emoji's name, which the caret left for one of its sides.
  */
-export function createMirror(send, render, { now = () => performance.now(), typingMovesFocus = 1500 } = {}) {
+export function createMirror(
+    send,
+    render,
+    { now = () => performance.now(), typingMovesFocus = 1500, tappedName = () => {} } = {}
+) {
     // reading: open, the PC's field not read yet (nothing is known about it, so nothing is reported missing either).
     let state = { open: false, reading: false, readable: false, text: '', selectionStart: 0, selectionEnd: 0 };
     let confirmed = null,
@@ -264,18 +268,23 @@ export function createMirror(send, render, { now = () => performance.now(), typi
                 && selectionStart === state.selectionStart
                 && selectionEnd === state.selectionEnd;
             if (same) return;
-            // A caret moved into an emoji's name crosses or selects it (coverObjects): the phone's field shows it at once.
+            // A caret moved into an emoji goes to one of its sides (coverObjects): the phone's field shows it at once. A
+            // tap in a custom one's name (":party:") tells why it went there.
             let covered = false;
             if (previous === state.text && text === state.text) {
                 const moving = now() - caretMovedAt < 400;
                 caretMovedAt = now();
-                const [start, end] = coverObjects(
+                const [start, end, tapped] = coverObjects(
                     state.objects,
                     selectionStart,
                     selectionEnd,
                     [state.selectionStart, state.selectionEnd],
                     moving
                 );
+                if (tapped) {
+                    const [from, to] = state.objects.find(([from, to]) => from === start || to === start);
+                    if (/^:.+:$/.test(state.text.slice(from, to))) tappedName();
+                }
                 covered = start !== selectionStart || end !== selectionEnd;
                 [selectionStart, selectionEnd] = [start, end];
             }

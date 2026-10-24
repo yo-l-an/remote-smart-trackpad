@@ -611,7 +611,7 @@ const scenarios = {
     // Inline emoji images (Discord's Slate, Slack's Quill): the phone shows each as the emoji its name stands for, a
     // custom one by its name (":partyparrot:"), several side by side or apart, over several lines; the caret steps
     // over each whole; typing goes between two; Backspace and a selection take each whole, across lines too; a tap
-    // in a custom one's name selects it.
+    // in a custom one's name puts the caret beside it, a selection starting in it (a long press) takes it whole.
     'emoji-row': {
         needs: 'emoji',
         steps: [
@@ -674,6 +674,15 @@ const scenarios = {
         steps: [
             ['content', ['go :partyparrot: now']],
             ['tap', 6],
+            ['type', 'yo'],
+        ],
+        expected: 'go yo:partyparrot: now',
+    },
+    'emoji-custom-select': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['go :partyparrot: now']],
+            ['select', 5, 10],
             ['type', 'yo'],
         ],
         expected: 'go yo now',

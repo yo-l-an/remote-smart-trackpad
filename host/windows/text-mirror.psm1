@@ -372,6 +372,21 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
         return
     }
     $range.Select()
+    # Right after an inline object, Discord's editor (Slate) takes that point for the object itself and selects it:
+    # the caret goes before it instead, and Right steps over it, as the editor does itself (several side by side,
+    # each in turn). Slate takes the page's selection in up to 100 ms later, so it is checked, and Right sent, after.
+    if ($start -eq $end -and $null -ne $objects -and $null -eq $objects.lines -and $objects.text -ceq $text -and -not (Test-ModifierHeld)) {
+        foreach ($object in @($objects.ranges)) {
+            if ($null -eq $object -or $object[1] -ne $start) { continue }
+            Start-Sleep -Milliseconds 150
+            $selected = try { $pattern.GetSelection()[0].GetText(16).Length -gt 0 } catch { $false }
+            if (-not $selected) { return }
+            Select-MirrorRange $object[0] $object[0] $text
+            Start-Sleep -Milliseconds 150
+            Tap-Key 'Right'
+            return
+        }
+    }
 }
 
 # Backspace until exactly the erased text is gone, reading the field after each: in an emoji sequence (surrogates,

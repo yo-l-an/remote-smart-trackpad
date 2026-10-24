@@ -302,10 +302,12 @@ function Get-ParagraphView($facts) {
 
 <#
 An edit from the phone that cuts into an inline object (Backspace on the end of an emoji's name) takes the whole
-object, as one key does on the PC. Facts: start, end, objects (from Get-InlineObjectView). Answers start and end.
+object, as one key does on the PC. Facts: start, end, objects (from Get-InlineObjectView). Answers start and end. An
+edit that removes nothing (a caret moved, text typed) stays as it is: it never erases an object it falls in.
 #>
 function Expand-ObjectEdit($facts) {
     $start = [int]$facts.start; $end = [int]$facts.end
+    if ($end -eq $start) { return @{ start=$start; end=$end } }
     foreach ($object in @($facts.objects | Where-Object { $null -ne $_ })) {
         if ($start -gt $object[0] -and $start -lt $object[1]) { $start = [int]$object[0] }
         if ($end -gt $object[0] -and $end -lt $object[1]) { $end = [int]$object[1] }
