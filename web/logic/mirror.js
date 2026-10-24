@@ -200,6 +200,10 @@ export function createMirror(send, render, { now = () => performance.now(), typi
             const snapshot = await send('mirror-read', { session: confirmed?.session, revision: confirmed?.revision });
             if (current !== generation) return;
             if (snapshot.unchanged) return;
+            // The phone moved or typed while the read was on its way (a caret stepping along the space bar): the
+            // read is older than that, so it overwrites nothing; the change goes out next (flush), against the PC's
+            // newer revision if it moved meanwhile.
+            if (dirty) return;
             if (
                 !confirmed
                 || snapshot.session !== confirmed.session

@@ -269,3 +269,18 @@ test('an inline object (an emoji name) is crossed in one step or selected whole,
     await h.reply({ accepted: true, snapshot: snapshot('plain') });
     assert.deepEqual(h.changes.at(-1).objects, []);
 });
+test('a caret moved while a read is on its way is not undone by that read', async () => {
+    const h = harness();
+    h.mirror.open();
+    await h.reply(snapshot('hello world'));
+    h.mirror.poll();
+    // The space-bar cursor steps back once while the read is out.
+    h.mirror.input('hello world', 10, 10);
+    const shown = h.changes.length;
+    // The read answers with the PC's caret from before that step, at a newer revision: the phone shows nothing of it.
+    await h.reply({ ...snapshot('hello world', 'field-a', 1), selectionStart: 11, selectionEnd: 11 });
+    assert.equal(h.changes.length, shown);
+    const edit = h.requests.at(-1);
+    assert.equal(edit.action, 'mirror-edit');
+    assert.deepEqual([edit.data.selectionStart, edit.data.selectionEnd], [10, 10]);
+});
