@@ -1,11 +1,13 @@
 // The real rich-text editors of the typing fixtures (tests/fixtures/typing.html), bundled by tests/checks/typing-check.mjs:
-// tiptap (ProseMirror, as Claude Desktop's prompt box) and Slate with inline emoji images (as Discord's message box).
+// tiptap (ProseMirror, as Claude Desktop's prompt box), Quill (as Slack's) and Slate with inline emoji images (as
+// Discord's message box).
 // Their own code handles Enter, Backspace, blank lines and emojis, as in those apps. Each registers itself in
 // window.fixtureEditors under its case id: element (where the keyboard goes), clear(), value() (its text, one line
 // per paragraph, an emoji as its name), setContent(lines) (its text set by the app itself, as another device or a
 // reply would: a line per paragraph, ":name:" an emoji) and caret(offset) (in value()'s text).
 import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import Quill from 'quill';
 import { createElement as h, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createEditor, Editor as SlateEditor, Node, Transforms } from 'slate';
@@ -37,6 +39,21 @@ function mountTiptap(id, host) {
                 lines.map((line) => ({ type: 'paragraph', content: line ? [{ type: 'text', text: line }] : [] }))
             ),
         caret: (offset) => editor.commands.setTextSelection(positionOf(offset)),
+    };
+}
+
+// Quill, as Slack's message box (class ql-editor): its text ends with a line break of its own, not the field's.
+function mountQuill(id, host) {
+    const editor = new Quill(host);
+    editors[id] = {
+        element: () => editor.root,
+        clear: () => editor.setText(''),
+        value: () => editor.getText().replace(/\n$/, ''),
+        setContent: (lines) => {
+            editor.setText(lines.join('\n') + '\n');
+            editor.setSelection(editor.getLength() - 1);
+        },
+        caret: (offset) => editor.setSelection(offset),
     };
 }
 
@@ -132,5 +149,6 @@ function SlateField({ id }) {
 for (const host of document.querySelectorAll('[data-editor]')) {
     const id = host.closest('[data-case]').dataset.case;
     if (host.dataset.editor === 'tiptap') mountTiptap(id, host);
+    else if (host.dataset.editor === 'quill') mountQuill(id, host);
     else createRoot(host).render(h(SlateField, { id }));
 }

@@ -4,6 +4,10 @@
         <meta charset="utf-8" />
         <title>Typing fixtures</title>
         <style>
+            /* Quill's own sheet keeps typed spaces and lines as typed (Slack has it). */
+            .ql-editor {
+                white-space: pre-wrap;
+            }
             .editor [contenteditable] {
                 min-height: 3em;
                 padding: 4px;
@@ -207,6 +211,19 @@
         >
             <label>tiptap (ProseMirror), as Claude Desktop's prompt box</label>
             <div class="editor" data-field data-editor="tiptap"></div>
+        </section>
+        <section
+            data-case="quill"
+            data-edge
+            data-caret
+            data-pc-caret
+            data-lines
+            data-rich
+            data-typed="hello world"
+            data-expected="hello world"
+        >
+            <label>Quill, as Slack's message box</label>
+            <div class="editor" data-field data-editor="quill"></div>
         </section>
         <section
             data-case="slate"

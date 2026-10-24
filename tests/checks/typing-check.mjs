@@ -42,7 +42,7 @@ const option = (name) =>
         .split(',');
 const quick = process.argv.includes('--quick');
 // The quick run's edge tier: Chrome's fields that broke the most, each a kind of its own.
-const quickEdge = ['textarea', 'tiptap', 'slate', 'code-line', 'delayed', 'complete'];
+const quickEdge = ['textarea', 'tiptap', 'quill', 'slate', 'code-line', 'delayed', 'complete'];
 const targets =
     option('target')
     ?? (quick ? ['chrome', 'winforms'] : ['chrome', 'firefox', 'winforms', 'wpf', 'notepad', 'vscode']);
@@ -124,7 +124,7 @@ function lineProcess(command, args) {
 /** Serves the fixture page, which asks for its next command each time it has run the previous one. */
 async function startFixturePage() {
     const html = await readFile(path.join(root, 'tests/fixtures/typing.html'), 'utf8');
-    // The real editors (tiptap, Slate), bundled once for the page.
+    // The real editors (tiptap, Quill, Slate), bundled once for the page.
     const { build } = await import('esbuild');
     const editors = (
         await build({

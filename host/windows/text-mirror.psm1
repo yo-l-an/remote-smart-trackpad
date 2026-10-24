@@ -215,8 +215,9 @@ function Read-MirrorOnce {
     $repaired = Repair-MirrorText @{ framework=$framework; className=$element.Current.ClassName; native=$resolved.native; text=$text; start=$start; end=$end; phantomBreak=$phantomBreak; valueBreak=$valueBreak }
     $text = $repaired.text; $start = $repaired.start; $end = $repaired.end
     $objects = $null
-    # ProseMirror (Claude Desktop, tiptap): its blank lines come back from its paragraphs (Get-ParagraphView).
-    if ($framework -eq 'Chrome' -and -not $resolved.native -and $element.Current.ClassName -match '(^|\s)ProseMirror(\s|$)') {
+    # ProseMirror (Claude Desktop, tiptap) and Quill (Slack): their blank lines come back from their paragraphs
+    # (Get-ParagraphView).
+    if ($framework -eq 'Chrome' -and -not $resolved.native -and $element.Current.ClassName -match '(^|\s)(ProseMirror|ql-editor)(\s|$)') {
         $paragraphs = Get-Paragraphs $element $pattern $ranges[0]
         if ($null -ne $paragraphs) {
             $view = Get-ParagraphView @{

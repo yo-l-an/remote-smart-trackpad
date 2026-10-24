@@ -135,7 +135,7 @@ function Get-InlineObjectView($facts) {
 }
 
 <#
-Blank lines in ProseMirror fields (Claude Desktop, tiptap): Chromium's text of the field drops or keeps its empty
+Blank lines in ProseMirror and Quill fields (Claude Desktop, tiptap, Slack): Chromium's text of the field drops or keeps its empty
 paragraphs depending on where they stand and how many follow each other, though each stays an element of its own. The
 text is rebuilt from the paragraphs instead, each on its line, whatever the field's text says. Facts: text (the
 field's), start, end, paragraphs (each paragraph's text, a lone line break for an empty one), and for each end of the
