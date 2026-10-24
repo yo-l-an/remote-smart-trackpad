@@ -259,6 +259,30 @@ function Read-MirrorFor($session, $revision) {
 # The phone closed its editor: the next read starts a new session.
 function Close-Mirror { $script:mirror = $null }
 
+<#
+The point after exactly `length` characters of the field's text (reported, as the mirror reads it), walking UI
+Automation's characters one at a time from the start until the text before it is that text: for fields whose
+characters are not the text's, where counting misses. Null when no point is. Costly (a read per step), so only where
+counting failed.
+#>
+function Find-TextPoint($pattern, [string]$reported, [int]$length) {
+    $headEdge = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start
+    $tailEdge = [System.Windows.Automation.Text.TextPatternRangeEndpoint]::End
+    $wanted = $reported.Substring(0, $length)
+    $prefix = $pattern.DocumentRange.Clone()
+    $prefix.MoveEndpointByRange($tailEdge, $prefix, $headEdge)
+    for ($step = 0; $step -le 2 * $reported.Length + 16; $step++) {
+        $text = Normalize-MirrorText ($prefix.GetText(262145))
+        if ($text -ceq $wanted) {
+            $point = $prefix.Clone()
+            $point.MoveEndpointByRange($headEdge, $point, $tailEdge)
+            return $point
+        }
+        if ($text.Length -gt $length -or $prefix.MoveEndpointByUnit($tailEdge, [System.Windows.Automation.Text.TextUnit]::Character, 1) -ne 1) { break }
+    }
+    return $null
+}
+
 function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
     $element = [System.Windows.Automation.AutomationElement]::FocusedElement
     if (-not $element.Equals($script:mirror.element)) { throw 'PC focus changed' }
@@ -298,7 +322,17 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
     $range.MoveEndpointByRange([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, $range, [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
     if ($range.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.Text.TextUnit]::Character, $to) -ne $to) { throw 'PC text range cannot be selected' }
     if ($range.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [System.Windows.Automation.Text.TextUnit]::Character, $from) -ne $from) { throw 'PC text range cannot be selected' }
-    if ((Normalize-MirrorText ($range.GetText(262145))) -cne $reported.Substring($rawStart, $rawEnd - $rawStart)) { throw 'PC text range differs' }
+    $wanted = $reported.Substring($rawStart, $rawEnd - $rawStart)
+    if ((Normalize-MirrorText ($range.GetText(262145))) -cne $wanted) {
+        # Around an inline object (Discord's emoji), UI Automation's characters are not the text's: its line breaks
+        # and marker are no stops of their own. Each end is then found by walking (Find-TextPoint).
+        $head = Find-TextPoint $pattern $reported $rawStart
+        $tail = Find-TextPoint $pattern $reported $rawEnd
+        if ($null -eq $head -or $null -eq $tail) { throw 'PC text range differs' }
+        $range = $head
+        $range.MoveEndpointByRange([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, $tail, [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
+        if ((Normalize-MirrorText ($range.GetText(262145))) -cne $wanted) { throw 'PC text range differs' }
+    }
     # A caret at the start of a line is ambiguous in Chromium: it can resolve to the end of the previous line. Place
     # it instead right after the last real character before the line breaks, then step over them with Right.
     if ($start -eq $end -and $start -gt 0 -and $text[$start - 1] -eq "`n" -and -not (Test-ModifierHeld)) {
