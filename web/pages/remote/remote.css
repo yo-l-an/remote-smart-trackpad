@@ -247,6 +247,7 @@ svg.icon-large {
     height: 1.75rem;
     margin-right: var(--space-1);
     padding: 0 var(--space-3);
+    border: none;
     border-radius: 999rem;
     corner-shape: round;
     background: var(--surface);
@@ -387,18 +388,18 @@ scroll-rail {
 .dots {
     --fade: 2.5rem;
     height: 100%;
+    background-image: radial-gradient(circle, var(--dot-color) 0.045rem, transparent 0.065rem);
+    /* Anchored at the center (a dot sits in the middle at rest); pointer-pad.js adds the finger offset. */
+    background-position: 50% 50%;
+    background-size: 1.5rem 1.5rem;
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
     -webkit-mask-image:
         linear-gradient(to right, var(--fade-in), var(--fade-out)),
         linear-gradient(to bottom, var(--fade-in), var(--fade-out));
     mask-image:
         linear-gradient(to right, var(--fade-in), var(--fade-out)),
         linear-gradient(to bottom, var(--fade-in), var(--fade-out));
-    -webkit-mask-composite: source-in;
-    background-image: radial-gradient(circle, var(--dot-color) 0.045rem, transparent 0.065rem);
-    /* Anchored at the center (a dot sits in the middle at rest); pointer-pad.js adds the finger offset. */
-    background-position: 50% 50%;
-    background-size: 1.5rem 1.5rem;
-    mask-composite: intersect;
 }
 .mouse-left,
 .mouse-right {
@@ -1394,13 +1395,13 @@ a.options-action {
 .speed-setting input[type='range'] {
     display: block;
     appearance: none;
+    -webkit-appearance: none;
     position: relative;
     width: 100%;
     height: 2.75rem;
     /* Keeps a 44px touch target while overlapping the empty space above and below the track. */
     margin: -0.5rem 0 -0.625rem;
     padding: 0;
-    -webkit-appearance: none;
     border: 0;
     border-radius: var(--radius-small);
     background: transparent;
@@ -1445,10 +1446,10 @@ a.options-action {
 }
 .speed-setting input::-webkit-slider-thumb {
     appearance: none;
+    -webkit-appearance: none;
     width: var(--thumb);
     height: var(--thumb);
     margin-top: calc((0.1875rem - var(--thumb)) / 2);
-    -webkit-appearance: none;
     border: none;
     border-radius: 999rem;
     corner-shape: round;
