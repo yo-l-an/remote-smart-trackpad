@@ -205,7 +205,14 @@ function Read-MirrorOnce {
     if ($resolved.empty) { $text = ''; $start = 0; $end = 0 }
     $framework = $element.Current.FrameworkId
     $phantomBreak = $framework -eq 'Chrome' -and -not $resolved.native -and $text.EndsWith("`n") -and (Test-PhantomBreak $element)
-    $repaired = Repair-MirrorText @{ framework=$framework; className=$element.Current.ClassName; native=$resolved.native; text=$text; start=$start; end=$end; phantomBreak=$phantomBreak }
+    $valueBreak = $false
+    if ($framework -eq 'Chrome' -and $resolved.native -and $text.EndsWith("`n")) {
+        $value = $null
+        if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value)) {
+            $valueBreak = $value.Current.Value.Replace("`r`n", "`n") -ceq $text.Substring(0, $text.Length - 1)
+        }
+    }
+    $repaired = Repair-MirrorText @{ framework=$framework; className=$element.Current.ClassName; native=$resolved.native; text=$text; start=$start; end=$end; phantomBreak=$phantomBreak; valueBreak=$valueBreak }
     $text = $repaired.text; $start = $repaired.start; $end = $repaired.end
     $objects = $null
     # ProseMirror (Claude Desktop, tiptap): its blank lines come back from its paragraphs (Get-ParagraphView).

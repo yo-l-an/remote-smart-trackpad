@@ -176,6 +176,11 @@ test('text repair: what a field reports but nobody typed is taken away', { skip:
         await repair({ framework: 'Chrome', text: 'a\n', start: 2, end: 2, native: true, phantomBreak: true }),
         { text: 'a\n', start: 2, end: 2 }
     );
+    // A Chromium textarea holding "top\n\n" reports "top\n\n\n": its value tells.
+    assert.deepEqual(
+        await repair({ framework: 'Chrome', text: 'top\n\n\n', start: 6, end: 6, native: true, valueBreak: true }),
+        { text: 'top\n\n', start: 5, end: 5 }
+    );
     assert.deepEqual(
         await repair({
             framework: 'WinForm',

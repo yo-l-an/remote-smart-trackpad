@@ -73,7 +73,8 @@ function Get-FieldVerdict($facts) {
 <#
 The text and caret a readable field holds once the parts it reports but nobody typed are taken away. Facts:
 framework, className, native (from the verdict), text, start, end, phantomBreak (Chromium reports a final line break
-the caret can never reach; the mirror asks only when the text ends with one).
+the caret can never reach; the mirror asks only when the text ends with one), valueBreak (a native field's value is
+its text without the final line break).
 #>
 function Repair-MirrorText($facts) {
     $text = [string]$facts.text; $start = [int]$facts.start; $end = [int]$facts.end
@@ -82,6 +83,8 @@ function Repair-MirrorText($facts) {
     if ($rich -and $text -ceq "`n") { return @{ text=''; start=0; end=0 } }
     $trimmed = $false
     if ($rich -and $facts.framework -eq 'Chrome' -and $text.EndsWith("`n") -and $facts.phantomBreak) { $trimmed = $true }
+    # A Chromium textarea ending with a line break reports one more, which its value has not.
+    if ($facts.framework -eq 'Chrome' -and $facts.native -and $text.EndsWith("`n") -and $facts.valueBreak) { $trimmed = $true }
     # A Windows rich edit box (RichEdit, WinForms' RichTextBox) ends with a paragraph mark the caret never passes.
     if ($facts.framework -in @('Win32', 'WinForm') -and $facts.className -like '*RichEdit*' -and $text.EndsWith("`n")) { $trimmed = $true }
     if ($trimmed) {
