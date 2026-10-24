@@ -335,9 +335,18 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
             $at.MoveEndpointByRange($headEdge, $at, $tailEdge)
             return $at
         }
+        # A selection ending with the image that ends its line (Slack's emoji) ends on its marker, with no line break
+        # after it to go past, and Chromium resolves that before the image: it is selected up to the image, and
+        # Shift+Right takes the image in.
+        $last = $null
+        if ($end -gt $start -and ($end -eq $text.Length -or $text[$end] -eq "`n") -and -not (Test-ModifierHeld)) {
+            $last = @($objects.ranges) | Where-Object { $null -ne $_ -and $_[1] -eq $end -and $_[0] -ge $start } | Select-Object -First 1
+        }
         $range = & $point $start
-        if ($end -ne $start) { $range.MoveEndpointByRange($tailEdge, (& $point $end), $headEdge) }
+        $until = if ($null -ne $last) { [int]$last[0] } else { $end }
+        if ($until -ne $start) { $range.MoveEndpointByRange($tailEdge, (& $point $until), $headEdge) }
         $range.Select()
+        if ($null -ne $last) { Invoke-Shortcut 'Right' @('Shift') }
         return
     }
     # With inline objects, the phone's positions stand in the reported text through rawAt (Get-InlineObjectView).
@@ -352,7 +361,15 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
     if ($range.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.Text.TextUnit]::Character, $to) -ne $to) { throw 'PC text range cannot be selected' }
     if ($range.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [System.Windows.Automation.Text.TextUnit]::Character, $from) -ne $from) { throw 'PC text range cannot be selected' }
     $wanted = $reported.Substring($rawStart, $rawEnd - $rawStart)
-    if ((Normalize-MirrorText ($range.GetText(262145))) -cne $wanted) {
+    # With inline objects, the text before the range is checked too: a caret's range holds no text, and a count
+    # off by one (Discord's hidden emoji names and anchors) would pass unseen.
+    $misplaced = $false
+    if ($reported -cne $text) {
+        $before = $pattern.DocumentRange.Clone()
+        $before.MoveEndpointByRange([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, $range, [System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
+        $misplaced = -not [string]::Equals((Normalize-MirrorText ($before.GetText(262145))), $reported.Substring(0, $rawStart), [StringComparison]::Ordinal)
+    }
+    if ($misplaced -or (Normalize-MirrorText ($range.GetText(262145))) -cne $wanted) {
         # Around an inline object (Discord's emoji), UI Automation's characters are not the text's: its line breaks
         # and marker are no stops of their own. Each end is then found by walking (Find-TextPoint).
         $head = Find-TextPoint $pattern $reported $rawStart
@@ -470,7 +487,19 @@ function Invoke-MirrorEdit($data) {
         # are unreliable around empty lines in rich-text fields, so the caret stays where the app put it.
         $atCaret = $snapshot.selectionStart -eq $snapshot.selectionEnd -and $snapshot.selectionEnd -eq $end
         $overSelection = $snapshot.selectionStart -eq $start -and $snapshot.selectionEnd -eq $end -and $start -ne $end
-        if (-not $atCaret -and -not $overSelection) { Select-MirrorRange $start $end $old }
+        if (-not $atCaret -and -not $overSelection) {
+            Select-MirrorRange $start $end $old
+            # A web editor (Slate: Discord) takes the page's new selection in up to 100 ms later: a key sent before
+            # that acts on its old one (Delete erasing another character).
+            if (([System.Windows.Automation.AutomationElement]::FocusedElement).Current.FrameworkId -eq 'Chrome') { Start-Sleep -Milliseconds 150 }
+            # A selection the field did not take (Chromium collapses one on a lone U+FFFD) would have Delete erase what
+            # follows: the caret goes after the text instead, and Backspace erases it as at the caret.
+            if ($end -gt $start -and -not $insert.Length) {
+                $pattern = ([System.Windows.Automation.AutomationElement]::FocusedElement).GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern)
+                $selected = try { $pattern.GetSelection()[0].GetText(16).Length -gt 0 } catch { $true }
+                if (-not $selected) { Select-MirrorRange $end $end $old; $atCaret = $true }
+            }
+        }
         if (-not ([System.Windows.Automation.AutomationElement]::FocusedElement).Equals($script:mirror.element)) { return @{ accepted=$false; snapshot=(Read-Mirror) } }
         $script:typedInto = $insert.Length -gt 0
         if ($atCaret) {

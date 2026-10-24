@@ -687,6 +687,26 @@ const scenarios = {
         ],
         expected: 'go yo now',
     },
+    // A line of emojis side by side erased: Backspace held (one after the other, fast), or the line selected.
+    'emoji-run-erase': {
+        needs: 'emoji',
+        fast: true,
+        steps: [
+            ['content', ['x', ':joy::joy::sweat_smile::joy::smile:']],
+            ['tap', 'end'],
+            ...Array(6).fill(['key', 'Backspace']),
+        ],
+        expected: 'x',
+    },
+    'emoji-run-select': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['x', ':joy::joy::sweat_smile::joy::smile:', 'y']],
+            ['select', 2, 12],
+            ['key', 'Backspace'],
+        ],
+        expected: 'x\n\ny',
+    },
     'emoji-type': {
         needs: 'emoji',
         steps: [
