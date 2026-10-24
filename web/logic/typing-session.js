@@ -118,7 +118,13 @@ export function createTypingSession({
      * moves the PC's caret to its end.
      */
     function forward(text, position) {
-        const change = replacementFor(shown.text, text, position);
+        let change = replacementFor(shown.text, text, position);
+        // A change that stops short of the caret, the same text between them before and after (Gboard's double-space
+        // period, ". " for " ", reads as "." before the space): it reaches the caret, so the PC's caret ends up where
+        // the phone's is.
+        const typedEnd = change.start + change.text.length;
+        if (typedEnd < position && caret - change.end === position - typedEnd)
+            change = { start: change.start, end: caret, text: text.slice(change.start, position) };
         const removed = graphemes(shown.text.slice(change.start, change.end));
         // No change (a selection the keyboard made): the PC's caret has not moved.
         if (!removed && !change.text) return;

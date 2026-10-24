@@ -93,6 +93,11 @@ test('typing blind sends the difference as text and keys, and keeps it on the ph
             { backspace: 1, delete: 0, text: '' },
         ]
     );
+    // Gboard's double-space period turns the space into ". ": the space erased, ". " typed, the PC's caret after it.
+    h.session.edit('hell ', 5, 5);
+    h.session.edit('hell. ', 6, 6);
+    assert.deepEqual(h.typed().at(-1).data, { backspace: 1, delete: 0, text: '. ' });
+    assert.ok(!h.typed().some(({ action }) => action === 'shortcut'));
     // The PC field reads the same: nothing is shown anew, the echo stays as the phone shows it.
     const shown = h.views.length;
     await h.poll();
