@@ -93,6 +93,25 @@
                     ><input type="checkbox" name="freeScroll" /><span class="checkbox" data-icon="check"></span
                     ><span class="option-icon" data-icon="free-scroll"></span>Free scroll with trackpad</label
                 >
+                <!-- The finger's distance from where it touched sets the speed (joystick.js): for the pointer, for the
+                     trackpad's free scroll and the rails. -->
+                <div class="axis-setting" role="group" aria-label="Joystick">
+                    <span><span class="option-icon" data-icon="joystick"></span>Joystick</span>
+                    <label
+                        ><input type="checkbox" name="joystickMouse" aria-label="Joystick mouse" /><span
+                            class="checkbox"
+                            data-icon="check"
+                        ></span
+                        >Mouse</label
+                    >
+                    <label
+                        ><input type="checkbox" name="joystickScroll" aria-label="Joystick scroll" /><span
+                            class="checkbox"
+                            data-icon="check"
+                        ></span
+                        >Scroll</label
+                    >
+                </div>
             </div>
             <!-- Option defaults live in these attributes; values stored on the phone override them. -->
             <div id="options" class="options" role="region" aria-label="Options" hidden>
@@ -177,10 +196,7 @@
                     <hr />
                 </div>
                 <label
-                    ><input type="checkbox" name="autoCapitalize" /><span
-                        class="checkbox"
-                        data-icon="check"
-                    ></span
+                    ><input type="checkbox" name="autoCapitalize" /><span class="checkbox" data-icon="check"></span
                     >Capitalize sentences</label
                 >
                 <label
@@ -308,10 +324,11 @@
                         >Y</label
                     >
                 </div>
-                <label
+                <label id="edge-motion-option"
                     ><input type="checkbox" name="edgeMotion" checked /><span class="checkbox" data-icon="check"></span
                     >Keep moving at screen edges</label
                 >
+                <p id="edge-motion-note" class="option-note" hidden>Not available with Joystick mode</p>
                 <div class="option-separator">
                     <span>Scroll</span>
                     <hr />

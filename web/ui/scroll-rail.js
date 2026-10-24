@@ -1,4 +1,5 @@
 import { tick } from './haptics.js';
+import { createJoystick } from './joystick.js';
 
 export class ScrollRail extends HTMLElement {
     #sliding = true;
@@ -14,14 +15,27 @@ export class ScrollRail extends HTMLElement {
      */
     set sliding(value) {
         this.#sliding = value;
-        if (this.#viewport) this.#viewport.style.touchAction = value ? '' : 'none';
+        this.#touch();
+    }
+    #joystick = false;
+    /**
+     * Joystick mode (see joystick.js): the finger's distance from where it touched the rail sets the scroll's speed,
+     * as long as it rests there. The rail follows it directly then, as without sliding.
+     */
+    set joystick(value) {
+        if (!value) this.stick?.end();
+        this.#joystick = value;
+        this.#touch();
+    }
+    #touch() {
+        if (this.#viewport) this.#viewport.style.touchAction = this.#sliding && !this.#joystick ? '' : 'none';
     }
     connectedCallback() {
         if (this.firstChild) return;
         const horizontal = this.getAttribute('axis') === 'x';
         this.innerHTML = '<div class="rail-viewport" tabindex="0"><div class="rail-content"></div></div>';
         const viewport = (this.#viewport = this.firstElementChild);
-        this.sliding = this.#sliding;
+        this.#touch();
         viewport.setAttribute('aria-label', horizontal ? 'Horizontal scroll' : 'Vertical scroll');
         const property = horizontal ? 'scrollLeft' : 'scrollTop';
         // The rest position is the middle of the scroll range, which follows the interface scale (rem-sized content).
@@ -164,27 +178,35 @@ export class ScrollRail extends HTMLElement {
         });
         this.observer.observe(viewport);
 
-        // Direct mode (sliding off): the finger's movement is the scroll, and lifting it ends everything at once.
+        // Moved by code with `previous` in step, so the scroll listener does not emit it a second time.
+        const scrollBy = (delta) => {
+            viewport[property] += delta;
+            previous = viewport[property];
+            emit(delta);
+            recenterLater();
+        };
+        // Joystick mode: one axis, the offset as a drag would scroll it.
+        const stick = (this.stick = createJoystick({ step: (delta) => scrollBy(delta) }));
+        // Direct mode (sliding off, or joystick): the finger's movement is the scroll, and lifting it ends everything
+        // at once.
         viewport.addEventListener('pointerdown', (event) => {
-            if (this.#sliding || event.pointerType === 'mouse' || drag) return;
-            drag = { id: event.pointerId, position: horizontal ? event.clientX : event.clientY };
+            if ((this.#sliding && !this.#joystick) || event.pointerType === 'mouse' || drag) return;
+            const position = horizontal ? event.clientX : event.clientY;
+            drag = { id: event.pointerId, position, start: position };
             viewport.setPointerCapture(event.pointerId);
         });
         viewport.addEventListener('pointermove', (event) => {
             if (event.pointerId !== drag?.id) return;
             const position = horizontal ? event.clientX : event.clientY;
+            if (this.#joystick) return stick.update(drag.start - position, 0);
             const delta = drag.position - position;
             drag.position = position;
-            if (!delta) return;
-            // Moved by code with `previous` in step, so the scroll listener does not emit it a second time.
-            viewport[property] += delta;
-            previous = viewport[property];
-            emit(delta);
-            recenterLater();
+            if (delta) scrollBy(delta);
         });
         const endDrag = (event) => {
             if (event.pointerId !== drag?.id) return;
             drag = null;
+            stick.end();
             this.dispatchEvent(new CustomEvent('motion-release', { bubbles: true, detail: { action: 'scroll' } }));
         };
         viewport.addEventListener('pointerup', endDrag);

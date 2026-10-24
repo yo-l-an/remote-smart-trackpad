@@ -486,7 +486,8 @@ scroll-rail {
     display: none;
 }
 .mouse-mode[data-active='hold'] .mode-icon[data-mode='hold'],
-.mouse-mode[data-active='scroll'] .mode-icon[data-mode='scroll'] {
+.mouse-mode[data-active='scroll'] .mode-icon[data-mode='scroll'],
+.mouse-mode[data-active='joystick'] .mode-icon[data-mode='joystick'] {
     display: grid;
 }
 .mode-icon svg {
@@ -1016,7 +1017,11 @@ a.options-action.is-pressed {
     gap: 0 var(--space-3);
 }
 .axis-setting > span {
+    display: inline-flex;
     flex: 1 0 auto;
+    align-items: center;
+    /* An icon before the title (the Joystick group) stays on its line, spaced as in an option row. */
+    gap: 0.625rem;
 }
 /* A shared minimum width lines the checkboxes up in columns from row to row (X, Y, Mouse, Scroll). The two choices
    stand apart, so which name goes with which box reads at a glance. */
@@ -1159,8 +1164,10 @@ a.options-action.is-pressed {
  */
 .options.mode-menu {
     top: auto;
+    /* As wide as its content, within reason: never squeezed against the screen's edge, never wider than a thumb's reach. */
     width: max-content;
     min-width: 12rem;
+    max-width: min(20rem, calc(100% - 2 * var(--panel-edge)));
     max-height: none;
     padding: var(--space-2) 0;
     /* Clipped to its rounded corners, as the options menu (which clips by scrolling). */
@@ -1610,4 +1617,17 @@ a.options-action {
 .trackpad.is-dragging {
     --dot-color: var(--dot-active);
     background: var(--drag-fill);
+}
+
+/* An option another one turns off (edge motion under the joystick): faded, out of reach, its reason under it, in line
+   with its text. */
+.options label.is-unavailable {
+    opacity: 0.4;
+    pointer-events: none;
+}
+.option-note {
+    margin: -0.375rem 0 0;
+    padding: 0 var(--space-4) var(--space-2) calc(var(--space-4) + 1.125rem + 0.625rem);
+    color: var(--muted);
+    font-size: 0.625rem;
 }

@@ -1,6 +1,7 @@
 import {
     createElement,
     EllipsisVertical,
+    Joystick,
     Check,
     VolumeOff,
     Volume1,
@@ -74,6 +75,7 @@ const icons = {
     text: TextCursor,
     hold: ArrowDownToDot,
     'free-scroll': Hand,
+    joystick: Joystick,
 };
 // Sized in CSS (rem), not with width/height attributes in pixels, so icons follow the interface scale.
 export function icon(name) {

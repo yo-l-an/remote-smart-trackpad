@@ -145,7 +145,15 @@ const applyHaptics = () =>
     setHaptics({ button: option.buttonHaptics !== false, scroll: option.scrollHaptics !== false });
 function applyLayout() {
     pad.sliding = option.mouseSliding === true;
-    pad.edgeMotion = option.edgeMotion === true;
+    // Joystick mode moves without dragging: edge motion has nothing to do then, and its option says so.
+    const joystickMouse = option.joystickMouse === true,
+        joystickScroll = option.joystickScroll === true;
+    pad.joystick = { mouse: joystickMouse, scroll: joystickScroll };
+    for (const rail of pad.querySelectorAll('scroll-rail')) rail.joystick = joystickScroll;
+    pad.edgeMotion = option.edgeMotion === true && !joystickMouse;
+    $('#edge-motion-option').classList.toggle('is-unavailable', joystickMouse);
+    $('#edge-motion-option input').disabled = joystickMouse;
+    $('#edge-motion-note').hidden = !joystickMouse;
     pad.scrollSliding = option.scrollSliding !== false;
     pad.freeScroll = option.freeScroll === true;
     showModes();
@@ -736,7 +744,7 @@ document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') setModeMenu(false);
 });
 
-// The modes menu, from the MODE button in the pointer pad's corner: hold clicks, free scroll and sliding. Anchored
+// The modes menu, from the MODE button in the pointer pad's corner: hold clicks, free scroll, joystick. Anchored
 // on the button's bottom-right corner, it morphs out of the button's box (see morph-panel.js). A tap anywhere else
 // closes it without acting.
 const modeOpen = () => modeButton.getAttribute('aria-expanded') === 'true';
@@ -779,13 +787,17 @@ function setModeMenu(open, { fromKeyboard = false } = {}) {
 }
 /**
  * The hold box and the MODE button follow the modes that are on: none shows MODE, quietly; one shows its icon (hold
- * clicks, free scroll); several show how many. The check badge marks any.
+ * clicks, free scroll, joystick); several show how many. The check badge marks any.
  */
 let modeShown,
     modeAnimations = [];
 function showModes() {
     holdClicks.checked = pad.holding;
-    const active = [pad.holding && 'hold', option.freeScroll === true && 'scroll'].filter(Boolean);
+    const active = [
+        pad.holding && 'hold',
+        option.freeScroll === true && 'scroll',
+        (option.joystickMouse === true || option.joystickScroll === true) && 'joystick',
+    ].filter(Boolean);
     const shown = active.length > 1 ? 'several' : (active[0] ?? '');
     const box = modeButton.querySelector('.mode-box'),
         // Where the box is now, mid-animation included; then the running animations go, so the size measured next is
@@ -820,7 +832,7 @@ function showModes() {
         modeAnimations = [resize, fade].filter(Boolean);
     }
     modeShown = shown;
-    const names = { hold: 'Hold clicks', scroll: 'Free scroll' };
+    const names = { hold: 'Hold clicks', scroll: 'Free scroll', joystick: 'Joystick' };
     modeButton.setAttribute(
         'aria-label',
         active.length ? `Modes: ${active.map((mode) => names[mode]).join(', ')}` : 'Modes'
@@ -922,6 +934,8 @@ const layoutOptions = new Set([
     'edgeMotion',
     'scrollSliding',
     'freeScroll',
+    'joystickMouse',
+    'joystickScroll',
     'doubleTapScrollX',
     'doubleTapScrollY',
     'navButtons',

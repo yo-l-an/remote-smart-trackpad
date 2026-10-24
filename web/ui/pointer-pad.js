@@ -1,6 +1,7 @@
 import './scroll-rail.js';
 import { icon } from './icons.js';
 import { createEdgeMotion } from './edge-motion.js';
+import { createJoystick } from './joystick.js';
 import { blockMenu, tick } from './haptics.js';
 
 class PointerPad extends HTMLElement {
@@ -11,6 +12,17 @@ class PointerPad extends HTMLElement {
     set edgeMotion(value) {
         this.#edgeMotion = value;
         if (!value) this.edges?.end();
+    }
+    #joystickMouse = false;
+    #joystickScroll = false;
+    /**
+     * Joystick mode (see joystick.js), for the pointer (mouse) and for free scroll (scroll): the finger's distance from
+     * where it touched sets the speed, as long as it rests there.
+     */
+    set joystick({ mouse, scroll }) {
+        if (mouse !== this.#joystickMouse || scroll !== this.#joystickScroll) this.cancelGesture?.();
+        this.#joystickMouse = mouse;
+        this.#joystickScroll = scroll;
     }
     slideFrame = 0;
     set sliding(value) {
@@ -51,7 +63,7 @@ class PointerPad extends HTMLElement {
     }
     connectedCallback() {
         if (this.firstChild) return;
-        this.innerHTML = `<div class="mouse"><div class="trackpad" role="application" aria-label="Move PC pointer"><div class="dots"></div></div><button class="mouse-left" aria-label="Left click" data-button="left"></button><button class="mouse-middle" aria-label="Middle click" data-button="middle"><span class="middle-dot"></span></button><button class="mouse-right" aria-label="Right click" data-button="right"></button></div><scroll-rail axis="y"></scroll-rail><scroll-rail axis="x"></scroll-rail><button class="mouse-mode" aria-label="Modes" aria-haspopup="true" aria-expanded="false" aria-controls="mode-menu"><span class="mode-box"><span class="mode-text">MODE</span><span class="mode-icon" data-mode="hold"></span><span class="mode-icon" data-mode="scroll"></span><span class="mode-count"></span><span class="mode-badge"></span></span></button>`;
+        this.innerHTML = `<div class="mouse"><div class="trackpad" role="application" aria-label="Move PC pointer"><div class="dots"></div></div><button class="mouse-left" aria-label="Left click" data-button="left"></button><button class="mouse-middle" aria-label="Middle click" data-button="middle"><span class="middle-dot"></span></button><button class="mouse-right" aria-label="Right click" data-button="right"></button></div><scroll-rail axis="y"></scroll-rail><scroll-rail axis="x"></scroll-rail><button class="mouse-mode" aria-label="Modes" aria-haspopup="true" aria-expanded="false" aria-controls="mode-menu"><span class="mode-box"><span class="mode-text">MODE</span><span class="mode-icon" data-mode="hold"></span><span class="mode-icon" data-mode="scroll"></span><span class="mode-icon" data-mode="joystick"></span><span class="mode-count"></span><span class="mode-badge"></span></span></button>`;
         const pad = this.querySelector('.trackpad');
         // Gestures: one finger moves, a tap clicks (two quick taps double-click), and tap-then-touch-and-move drags
         // with the left button held until the finger lifts. A single tap's click waits one double-tap window so a
@@ -100,6 +112,15 @@ class PointerPad extends HTMLElement {
             animate: shiftPattern,
         }));
         const dragAt = (event) => this.#edgeMotion && !this.#freeScroll && edges.update(event.clientX, event.clientY);
+        // Joystick mode: the pointer glides on the PC as with edge motion; a scroll is sent each frame.
+        const pointerStick = createJoystick({
+                glide: (vx, vy, speed) =>
+                    this.dispatchEvent(new CustomEvent('edge-glide', { bubbles: true, detail: { vx, vy, speed } })),
+                animate: shiftPattern,
+            }),
+            scrollStick = createJoystick({ step: (dx, dy, speed) => move(dx, dy, speed) });
+        const stick = () =>
+            this.#freeScroll ? this.#joystickScroll && scrollStick : this.#joystickMouse && pointerStick;
         const flushTap = () => {
             if (!pendingTap) return;
             clearTimeout(pendingTap.timer);
@@ -116,6 +137,8 @@ class PointerPad extends HTMLElement {
         this.cancelGesture = () => {
             this.stopSliding();
             edges.end();
+            pointerStick.end();
+            scrollStick.end();
             this.releaseButtons?.();
             flushTap();
             setDragging(false);
@@ -172,6 +195,21 @@ class PointerPad extends HTMLElement {
             velocityY = velocityY * (1 - blend) + (dy / elapsed) * blend;
             lastMove = now;
             const speed = Math.hypot(velocityX, velocityY);
+            const joystick = stick();
+            if (joystick) {
+                // Tap then touch: a drag holds the left button while the joystick moves (free scroll: a click, then
+                // the scroll), as without the joystick.
+                if (secondTouch && !dragging) {
+                    if (!moved) return;
+                    if (this.#freeScroll) {
+                        secondTouch = false;
+                        click();
+                    } else setDragging(true);
+                    buffered = [];
+                }
+                if (moved) joystick.update(x - startX, y - startY);
+                return;
+            }
             if (secondTouch && !dragging) {
                 // Hold the first pixels back so the button goes down where the second touch landed.
                 buffered.push([dx, dy, speed]);
@@ -195,6 +233,9 @@ class PointerPad extends HTMLElement {
             if (event.pointerId !== pointer) return;
             pointer = null;
             edges.end();
+            const joystick = stick();
+            pointerStick.end();
+            scrollStick.end();
             const tap = !moved && performance.now() - startTime < tapDuration;
             if (dragging) setDragging(false);
             else if (secondTouch) {
@@ -213,7 +254,8 @@ class PointerPad extends HTMLElement {
                 }, doubleTapWindow);
                 pendingTap = { x: startX, y: startY, timer };
             } else if (
-                (this.#freeScroll ? this.#scrollSliding : this.slidingEnabled)
+                !joystick
+                && (this.#freeScroll ? this.#scrollSliding : this.slidingEnabled)
                 && performance.now() - lastMove < 100
                 && !this.querySelector('.is-held')
             )
@@ -230,6 +272,7 @@ class PointerPad extends HTMLElement {
         mode.querySelector('.mode-badge').append(icon('check'));
         mode.querySelector('[data-mode=hold]').append(icon('hold'));
         mode.querySelector('[data-mode=scroll]').append(icon('free-scroll'));
+        mode.querySelector('[data-mode=joystick]').append(icon('joystick'));
         mode.addEventListener('pointerdown', (event) => event.preventDefault());
         // Hold mode: a tap presses a mouse button and keeps it down until the next tap on it (one finger at a time).
         const latched = new Set();
