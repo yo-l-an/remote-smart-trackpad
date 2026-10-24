@@ -336,18 +336,79 @@ test(
     }
 );
 
+test('inline objects: each emoji image shows as its emoji, else by its name', { skip: !windows }, async () => {
+    const show = (name) => ask('Get-ObjectShown', { name });
+    // Slack's labels, Discord's alt (a shortcode, or the emoji itself).
+    assert.equal(await show('joy emoji'), '😂');
+    assert.equal(await show('rolling on the floor laughing emoji'), '🤣');
+    assert.equal(await show(':sweat_smile:'), '😅');
+    assert.equal(await show('+1 emoji'), '👍️');
+    assert.equal(await show('😂'), '😂');
+    // Custom ones by their shortcode; an image named otherwise, or not at all, as a dotted square.
+    assert.equal(await show('partyparrot emoji'), ':partyparrot:');
+    assert.equal(await show(':party_blob:'), ':party_blob:');
+    assert.equal(await show('a photo of Bob'), '⬚');
+    assert.equal(await show(''), '⬚');
+});
+
+test("inline objects in paragraphs: Slack's emoji images, the caret around them", { skip: !windows }, async () => {
+    // As Slack's message box reads: Chromium sets each image between line breaks, one between two, none at a
+    // paragraph's edges; UI Automation steps through each of those characters.
+    const o = String.fromCodePoint(0xfffc);
+    const paragraphs = ['test', '\n', `${o}\n${o}\n hi \n${o}\n there`, `a \n${o}\n${o}\n b \n${o}`, `end \n${o}`];
+    const names = ['rolling on the floor laughing emoji', 'rolling on the floor laughing emoji', 'joy emoji'];
+    names.push('joy emoji', 'joy emoji', 'heart emoji', 'partyparrot emoji');
+    const read = (paragraph, startOffset, endOffset = startOffset) =>
+        ask('Get-ParagraphView', {
+            text: 'unused',
+            start: 0,
+            end: 0,
+            paragraphs,
+            names,
+            startParagraph: paragraph,
+            startOffset,
+            endParagraph: paragraph,
+            endOffset,
+        });
+    const view = await read(3, 3, 5);
+    assert.equal(view.text, 'test\n\n🤣🤣 hi 😂 there\na 😂😂 b ❤️\nend :partyparrot:');
+    // The PC's selection of the first 😂 of "a 😂😂": from inside its line breaks to past them.
+    assert.deepEqual([view.start, view.end], [25, 27]);
+    assert.deepEqual(view.objects.slice(3, 6), [
+        [25, 27],
+        [27, 29],
+        [32, 34],
+    ]);
+    // Positions of that line in its paragraph's text: before an image, its first line break; after it, past its line
+    // breaks (right after the marker, Chromium puts the caret before the image).
+    assert.deepEqual(view.offsets[3], [0, 1, 2, 2, 5, 5, 7, 8, 9, 10, 10, 12]);
+    // A caret right after the last image of a paragraph, and one between two.
+    assert.equal((await read(3, 12)).start, 34);
+    assert.equal((await read(3, 6)).start, 29);
+});
+
 test('inline objects: shown by their names, one caret step each', { skip: !windows }, async () => {
     // The embedded-object marker, the editor's zero-width anchor, the dotted square shown without a name.
     const [marker, anchor, square] = [0xfffc, 0xfeff, 0x2b1a].map((code) => String.fromCodePoint(code));
     const view = (text, start = text.length, end = start) => ask('Get-InlineObjectView', { text, start, end });
-    // Read from Discord's message box: the emoji image's alt text sits on a line of its own.
+    // Read from Discord's message box: the emoji image's alt text sits on a line of its own; the phone shows the emoji.
     const discord = await view(`Test \n${marker}\n:sweat_smile:\n${anchor}\n${anchor}`);
     // The editor's zero-width anchor after it is no text the field shows: the phone gets none.
-    assert.equal(discord.text, `Test :sweat_smile:`);
-    assert.deepEqual(discord.objects, [[5, 18]]);
-    assert.deepEqual([discord.start, discord.end], [18, 18]);
-    assert.deepEqual(discord.rawAt.slice(4, 8), [4, 5, 5, 5]);
-    assert.deepEqual(discord.rawAt.slice(-3), [5, 5, 25]);
+    assert.equal(discord.text, `Test 😅`);
+    assert.deepEqual(discord.objects, [[5, 7]]);
+    assert.deepEqual([discord.start, discord.end], [7, 7]);
+    assert.deepEqual(discord.rawAt.slice(4, 8), [4, 5, 5, 25]);
+    // A custom emoji, by its name.
+    const custom = await view(`Test \n${marker}\n:party_blob:\n${anchor}\n${anchor}`);
+    assert.deepEqual([custom.text, custom.objects], ['Test :party_blob:', [[5, 17]]]);
+    // The names of the images themselves, one for each object, come first (Chrome reads no alt line).
+    const named = await ask('Get-InlineObjectView', {
+        text: `a \n${marker}\n${anchor}\n b`,
+        start: 0,
+        end: 0,
+        names: [':joy:'],
+    });
+    assert.equal(named.text, 'a 😂 b');
     // Read from Chrome (tests/fixtures/placeholders.html, slate-emoji-*): no alt text, in the middle of a line and
     // at a line start.
     assert.equal((await view(`a \n${marker}\n${anchor}\n b`)).text, `a ${square} b`);
@@ -378,19 +439,19 @@ ${anchor}
     );
     const pair = await view(`
 ${marker}
-:a:
+:qx:
 ${anchor} 
 ${marker}
-:b:
+:qb:
 ${anchor}
 ${anchor}`);
     assert.deepEqual(
         [pair.text, pair.objects],
         [
-            `:a: :b:`,
+            `:qx: :qb:`,
             [
-                [0, 3],
-                [4, 7],
+                [0, 4],
+                [5, 9],
             ],
         ]
     );
@@ -405,12 +466,12 @@ ${anchor}`);
     assert.deepEqual([plain.text, plain.start, plain.rawAt], [`a\n${marker}\nb`, 1, null]);
 
     // Backspace on the end of a name takes the whole object, in one key press on the PC.
-    const objects = discord.objects;
-    assert.deepEqual(await ask('Expand-ObjectEdit', { start: 17, end: 18, objects }), { start: 5, end: 18 });
+    const objects = custom.objects;
+    assert.deepEqual(await ask('Expand-ObjectEdit', { start: 16, end: 17, objects }), { start: 5, end: 17 });
     assert.deepEqual(await ask('Expand-ObjectEdit', { start: 2, end: 4, objects }), { start: 2, end: 4 });
-    const text = discord.text;
-    assert.equal(await ask('Get-CaretSteps', { text, start: 5, end: 18, objects }), 1);
-    assert.equal(await ask('Get-CaretSteps', { text, start: 2, end: 18, objects }), 4);
+    const text = custom.text;
+    assert.equal(await ask('Get-CaretSteps', { text, start: 5, end: 17, objects }), 1);
+    assert.equal(await ask('Get-CaretSteps', { text, start: 2, end: 17, objects }), 4);
     // A field without objects (most of them) has no list at all: every edit goes through as is.
     assert.deepEqual(await ask('Expand-ObjectEdit', { start: 1, end: 2, objects: null }), { start: 1, end: 2 });
     assert.equal(await ask('Get-CaretSteps', { text: 'abc', start: 0, end: 2, objects: null }), 2);

@@ -164,6 +164,16 @@ function Read-MirrorOnce {
     }
     # Some providers refuse to report it at times (WPF's RichTextBox): the field cannot be followed, type blind.
     $ranges = try { $pattern.GetSelection() } catch { $null }
+    # Slack reports no selection once it turned an emoji typed into it into its image, though its caret stays after
+    # it. Right after typing text there (never otherwise: these are keys), a step left and back has it reported again.
+    if ($null -ne $ranges -and $ranges.Count -eq 0 -and $script:typedInto -and $null -ne $script:mirror -and $element.Equals($script:mirror.element)) {
+        Tap-Key 'Left'; Tap-Key 'Right'
+        for ($attempt = 0; $attempt -lt 20 -and $ranges.Count -eq 0; $attempt++) {
+            Start-Sleep -Milliseconds 10
+            $ranges = try { $pattern.GetSelection() } catch { $null }
+            if ($null -eq $ranges) { break }
+        }
+    }
     if ($null -eq $ranges -or $ranges.Count -ne 1) { $script:mirror = $null; return @{ field=$field; readable=$false; text='' } }
     $document = $pattern.DocumentRange
     # Read-only text (a web page rather than a field). The selection is the cheap hint; a caret next to a
@@ -215,31 +225,40 @@ function Read-MirrorOnce {
     $repaired = Repair-MirrorText @{ framework=$framework; className=$element.Current.ClassName; native=$resolved.native; text=$text; start=$start; end=$end; phantomBreak=$phantomBreak; valueBreak=$valueBreak }
     $text = $repaired.text; $start = $repaired.start; $end = $repaired.end
     $objects = $null
-    # ProseMirror (Claude Desktop, tiptap) and Quill (Slack): their blank lines come back from their paragraphs
-    # (Get-ParagraphView).
+    # Inline objects' names (emoji images: Slack's label, Discord's alt), from their image elements in order.
+    $names = $null
+    if ($framework -eq 'Chrome' -and -not $resolved.native -and $text.IndexOf([char]0xFFFC) -ge 0) {
+        $images = $element.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Image)))
+        if ($images.Count -le 2000) { $names = @(foreach ($image in $images) { $image.Current.Name }) }
+    }
+    # ProseMirror (Claude Desktop, tiptap) and Quill (Slack): their blank lines come back from their paragraphs, and
+    # their inline objects are placed in them (Get-ParagraphView).
     if ($framework -eq 'Chrome' -and -not $resolved.native -and $element.Current.ClassName -match '(^|\s)(ProseMirror|ql-editor)(\s|$)') {
         $paragraphs = Get-Paragraphs $element $pattern $ranges[0]
         if ($null -ne $paragraphs) {
             $view = Get-ParagraphView @{
-                text=$text; start=$start; end=$end; paragraphs=$paragraphs.texts
+                text=$text; start=$start; end=$end; paragraphs=$paragraphs.texts; names=$names
                 startParagraph=$paragraphs.startParagraph; startOffset=$paragraphs.startOffset
                 endParagraph=$paragraphs.endParagraph; endOffset=$paragraphs.endOffset
             }
-            if ($null -ne $view.lines) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$null; lines=$view.lines; paragraphs=$paragraphs.elements } }
+            if ($null -ne $view.lines) {
+                $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$view.objects; lines=$view.lines; paragraphs=$paragraphs.elements; offsets=$view.offsets }
+            }
             $text = $view.text; $start = $view.start; $end = $view.end
         }
     }
     # Inline objects (Discord's emoji images) by their names, one character each for the caret; positions on the
     # phone go back through rawAt, and the phone gets where each object stands.
     if ($null -eq $objects -and $framework -eq 'Chrome' -and -not $resolved.native) {
-        $view = Get-InlineObjectView @{ text=$text; start=$start; end=$end }
+        $view = Get-InlineObjectView @{ text=$text; start=$start; end=$end; names=$names }
         if ($null -ne $view.rawAt) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$view.objects } }
         $text = $view.text; $start = $view.start; $end = $view.end
     }
     # Chromium can misreport the caret on an empty line; after our own edit the caret position is known instead.
     $believed = if ($null -ne $script:mirror -and $element.Equals($script:mirror.element)) { $script:mirror.believed } else { $null }
     if ($null -ne $believed) {
-        if ($believed.text -ceq $text -and $believed.reportedStart -eq $start -and $believed.reportedEnd -eq $end) {
+        if ([string]::Equals($believed.text, $text, [StringComparison]::Ordinal) -and $believed.reportedStart -eq $start -and $believed.reportedEnd -eq $end) {
             $start = $believed.start; $end = $believed.end
         } else { $script:mirror.believed = $null }
     }
@@ -310,6 +329,8 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
             $at = $pattern.RangeFromChild($objects.paragraphs[$paragraph])
             $at.MoveEndpointByRange($tailEdge, $at, $headEdge)
             $offset = $position - $objects.lines[$paragraph]
+            # Its inline objects' line breaks and markers are characters of their own there.
+            if ($null -ne $objects.offsets -and $null -ne $objects.offsets[$paragraph]) { $offset = $objects.offsets[$paragraph][$offset] }
             if ($offset -and $at.MoveEndpointByUnit($tailEdge, [System.Windows.Automation.Text.TextUnit]::Character, $offset) -ne $offset) { throw 'PC text range cannot be selected' }
             $at.MoveEndpointByRange($headEdge, $at, $tailEdge)
             return $at
@@ -358,7 +379,14 @@ function Select-MirrorRange([int]$start, [int]$end, [string]$text) {
 # inline object (an emoji's name) takes one Backspace (Get-CaretSteps).
 function Remove-BeforeCaret([string]$old, [int]$start, [int]$end, $session, $objects = @()) {
     $erased = $old.Substring($start, $end - $start)
-    if ($erased -notmatch '[\uD800-\uDFFF\u200D\uFE0E\uFE0F\u20E3]') {
+    # An inline object (an emoji image) goes whole with one Backspace, however it shows: only emoji text is erased
+    # reading after each key.
+    $text = $erased
+    foreach ($object in @($objects | Where-Object { $null -ne $_ })) {
+        $from = [Math]::Max($start, [int]$object[0]); $to = [Math]::Min($end, [int]$object[1])
+        if ($to -gt $from) { $text = $text.Substring(0, $from - $start) + ([string][char]0x2B1A * ($to - $from)) + $text.Substring($to - $start) }
+    }
+    if ($text -notmatch '[\uD800-\uDFFF\u200D\uFE0E\uFE0F\u20E3]') {
         $removed = Get-CaretSteps @{ text=$old; start=$start; end=$end; objects=$objects }
         for ($index = 0; $index -lt $removed; $index++) { Tap-Key 'Backspace' }
         return
@@ -393,6 +421,10 @@ function Wait-EditOutcome([string]$old, [string]$next, [int]$landed, $session) {
 
 # Applies one phone edit (replace start..end with text, then the selection) to the field it was made against.
 function Edit-Mirror($data) {
+    try { return Invoke-MirrorEdit $data } finally { $script:typedInto = $false }
+}
+
+function Invoke-MirrorEdit($data) {
     $snapshot = Read-Mirror
     if (-not $snapshot.readable -or $snapshot.session -cne [string]$data.session -or $snapshot.revision -ne [int]$data.revision) {
         return @{ accepted=$false; snapshot=$snapshot }
@@ -425,6 +457,7 @@ function Edit-Mirror($data) {
         $overSelection = $snapshot.selectionStart -eq $start -and $snapshot.selectionEnd -eq $end -and $start -ne $end
         if (-not $atCaret -and -not $overSelection) { Select-MirrorRange $start $end $old }
         if (-not ([System.Windows.Automation.AutomationElement]::FocusedElement).Equals($script:mirror.element)) { return @{ accepted=$false; snapshot=(Read-Mirror) } }
+        $script:typedInto = $insert.Length -gt 0
         if ($atCaret) {
             Remove-BeforeCaret $old $start $end $snapshot.session $objects
             if ($insert.Length) { Insert-Text $insert }
@@ -446,10 +479,11 @@ function Edit-Mirror($data) {
     # After typing the caret already sits after the edit; otherwise it is placed where the phone's caret is.
     if (-not $natural) { Select-MirrorRange $selectionStart $selectionEnd $next }
     # Chromium can report the caret at the start of a new empty paragraph one line up after typing; remember where
-    # typing put it. A placed caret is reported as is, so a failed placement stays visible on the phone.
+    # typing put it. A placed caret is reported as is, so a failed placement stays visible on the phone. Compared
+    # ordinally: an app that adds a variation selector to an emoji typed (Slack) holds another text, and its caret.
     $script:mirror.believed = $null
     $final = Read-Mirror
-    if ($natural -and $final.session -ceq $snapshot.session -and $final.text -ceq $next -and
+    if ($natural -and $final.session -ceq $snapshot.session -and [string]::Equals($final.text, $next, [StringComparison]::Ordinal) -and
             ($final.selectionStart -ne $selectionStart -or $final.selectionEnd -ne $selectionEnd)) {
         $script:mirror.believed = @{ text=$next; reportedStart=$final.selectionStart; reportedEnd=$final.selectionEnd; start=$selectionStart; end=$selectionEnd }
         $final = Read-Mirror

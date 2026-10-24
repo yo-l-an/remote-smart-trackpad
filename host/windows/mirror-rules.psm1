@@ -95,12 +95,41 @@ function Repair-MirrorText($facts) {
 }
 
 <#
+What the phone shows for an inline emoji image, from its name: the emoji itself when the name is one (Discord's alt
+for a standard emoji) or names a known one, by its shortcode (":joy:", Discord's alt) or by Slack's label ("joy
+emoji", "rolling on the floor laughing emoji": the shortcode in words); a custom emoji as its shortcode (":party:");
+a dotted square without a name that reads as one. emoji-names.json (scripts/generate-emoji-names.mjs) holds the known
+shortcodes, loaded at the first emoji.
+#>
+$emojiNames = $null
+function Get-ObjectDisplay([string]$name) {
+    $square = [string][char]0x2B1A
+    $name = $name.Trim()
+    if (-not $name -or $name.Length -gt 64) { return $square }
+    # No letter, digit or colon: the emoji itself.
+    if ($name -notmatch '[\p{L}\p{N}:_]') { return $name }
+    $shortcode = [regex]::Match($name, '^:([^:\s]+):$')
+    $code = if ($shortcode.Success) { $shortcode.Groups[1].Value } else { ($name -replace '\s+emoji$', '') -replace '\s+', '_' }
+    # Read as a shortcode, unknown: only from a shortcode, Slack's label or a single word (not "a photo of Bob").
+    $coded = $shortcode.Success -or $name -match '\semoji$' -or $name -notmatch '\s'
+    if ($null -eq $script:emojiNames) {
+        $script:emojiNames = @{}
+        $table = ConvertFrom-Json ([System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'emoji-names.json'), [System.Text.Encoding]::UTF8))
+        foreach ($entry in $table.PSObject.Properties) { $script:emojiNames[$entry.Name] = [string]$entry.Value }
+    }
+    $emoji = $script:emojiNames[$code.ToLowerInvariant()]
+    if ($emoji) { return $emoji }
+    if ($coded -and $code -match '^[\w+-]+$') { return ":${code}:" }
+    return $square
+}
+
+<#
 Inline objects in Chromium rich text: an emoji image in Discord's message box, any inline element a Slate editor keeps
 uneditable. Chromium reports each on lines of its own, none of which the field shows: a line break, the
 embedded-object marker (U+FFFC), a line break, the image's alt text and a line break when it has one (":sweat_smile:"),
-then the editor's zero-width anchor and a line break. The phone gets each object as its alt text (a dotted square
-without one), which counts as one character, as on the PC: its caret stops only at the object's edges. Facts: text,
-start, end (the caret and selection in it). Answers text, start and end as the phone gets them; objects, the
+then the editor's zero-width anchor and a line break. The phone gets each object as Get-ObjectDisplay shows it, which
+counts as one character, as on the PC: its caret stops only at the object's edges. Facts: text, start, end (the caret
+and selection in it), names (each object's name, from its element; else its alt line counts). Answers text, start and end as the phone gets them; objects, the
 [start, end] of each object in that text; and rawAt: rawAt[i] is where the phone's position i stands in the reported
 text, an object's start for a position inside it (null when the text holds no such object). A caret inside an
 object's lines stands after it. The editor's zero-width anchors (U+FEFF: Slate's in an empty line, and beside an
@@ -117,11 +146,13 @@ function Get-InlineObjectView($facts) {
     $view = New-Object System.Text.StringBuilder
     $rawAt = New-Object 'System.Collections.Generic.List[int]'
     $objects = New-Object 'System.Collections.Generic.List[object]'
+    # The objects' own names, when there is one for each (their image elements, in order); else their alt lines.
+    $names = $null
+    if ($null -ne $facts.names -and @($facts.names).Count -eq $found.Count) { $names = @($facts.names) }
     $from = 0
     foreach ($object in $found) {
         for ($index = $from; $index -lt $object.Index; $index++) { if ($text[$index] -ne [char]0xFEFF) { $rawAt.Add($index); [void]$view.Append($text[$index]) } }
-        $name = $object.Groups[1].Value.Trim()
-        if (-not $name -or $name.Length -gt 64) { $name = [string][char]0x2B1A }
+        $name = Get-ObjectDisplay $(if ($null -ne $names) { [string]$names[$objects.Count] } else { $object.Groups[1].Value })
         $objects.Add(@($view.Length, ($view.Length + $name.Length)))
         foreach ($character in $name.ToCharArray()) { $rawAt.Add($object.Index); [void]$view.Append($character) }
         $from = $object.Index + $object.Length
@@ -146,11 +177,72 @@ field's text lines up with the paragraphs (null otherwise, and the text left as 
 end without its paragraph falls back on the field's text: the first position at or after it there, when they line up,
 else the text's start.
 #>
+# An inline object in a paragraph's text, with the line breaks Chromium sets around it (see Get-ParagraphView).
+$paragraphObject = "`n?" + [char]0xFFFC + "`n?"
 function Get-ParagraphView($facts) {
     $raw = [string]$facts.text
     $texts = @(@($facts.paragraphs) | ForEach-Object { if ([string]$_ -ceq "`n") { '' } else { [string]$_ } })
+    # Inline objects (Slack's emoji images), each shown as Get-ObjectDisplay does, from its name (names: one per
+    # object of the field, in order; else none). Chromium sets each between line breaks of its own, one between two
+    # objects, none at the paragraph's edges. offsets[p][i]: where position i of paragraph p's line stands in that
+    # paragraph's text (UI Automation steps through each of its characters); objects: [start, end] of each in the text.
+    $marks = @($texts | ForEach-Object { [regex]::Matches($_, $paragraphObject).Count })
+    $markCount = ($marks | Measure-Object -Sum).Sum
+    $names = $null
+    if ($null -ne $facts.names -and @($facts.names).Count -eq $markCount) { $names = @($facts.names) }
+    $offsets = New-Object 'System.Collections.Generic.List[object]'
+    $localObjects = New-Object 'System.Collections.Generic.List[object]'
+    $named = 0
+    for ($index = 0; $index -lt $texts.Count; $index++) {
+        $source = $texts[$index]
+        $found = [regex]::Matches($source, $paragraphObject)
+        if (-not $found.Count) { $offsets.Add($null); $localObjects.Add(@()); continue }
+        $view = New-Object System.Text.StringBuilder
+        $at = New-Object 'System.Collections.Generic.List[int]'
+        $ranges = New-Object 'System.Collections.Generic.List[object]'
+        $from = 0; $after = -1
+        foreach ($object in $found) {
+            for ($position = $from; $position -lt $object.Index; $position++) {
+                $at.Add($(if ($after -ge 0) { $after } else { $position })); $after = -1
+                [void]$view.Append($source[$position])
+            }
+            $shown = Get-ObjectDisplay $(if ($null -ne $names) { [string]$names[$named] } else { '' })
+            $named++
+            $ranges.Add(@($view.Length, ($view.Length + $shown.Length)))
+            # Before the object: before its first line break; inside it, the same; after it: past its line breaks
+            # (a caret right after the marker, Chromium places before the image).
+            $at.Add($(if ($after -ge 0) { $after } else { $object.Index }))
+            for ($step = 1; $step -lt $shown.Length; $step++) { $at.Add($object.Index) }
+            [void]$view.Append($shown)
+            $after = $object.Index + $object.Length
+            $from = $object.Index + $object.Length
+        }
+        for ($position = $from; $position -lt $source.Length; $position++) {
+            $at.Add($(if ($after -ge 0) { $after } else { $position })); $after = -1
+            [void]$view.Append($source[$position])
+        }
+        $at.Add($(if ($after -ge 0) { $after } else { $source.Length }))
+        $texts[$index] = $view.ToString()
+        $offsets.Add($at.ToArray()); $localObjects.Add($ranges.ToArray())
+    }
+    # A paragraph's offset (its text before a selection's end) as a position of its line: within an object's line
+    # breaks, before or after it, whichever side of its marker.
+    $inLine = {
+        param([int]$paragraph, $offset)
+        if ($null -eq $offset -or $paragraph -lt 0 -or $paragraph -ge $offsets.Count -or $null -eq $offsets[$paragraph]) { return $offset }
+        $at = $offsets[$paragraph]; $wanted = [int]$offset
+        foreach ($object in [regex]::Matches([string]$facts.paragraphs[$paragraph], $paragraphObject)) {
+            $marker = $object.Index + $object.Value.IndexOf([char]0xFFFC)
+            if ($wanted -gt $object.Index -and $wanted -le $marker) { $wanted = $object.Index }
+            elseif ($wanted -gt $marker -and $wanted -lt $object.Index + $object.Length) { $wanted = $object.Index + $object.Length }
+        }
+        for ($position = 0; $position -lt $at.Length; $position++) { if ($at[$position] -ge $wanted) { return $position } }
+        return $at.Length - 1
+    }
+    $startOffset = & $inLine ([int]$(if ($null -ne $facts.startParagraph) { $facts.startParagraph } else { -1 })) $facts.startOffset
+    $endOffset = & $inLine ([int]$(if ($null -ne $facts.endParagraph) { $facts.endParagraph } else { -1 })) $facts.endOffset
     $filled = @($texts | Where-Object { $_.Length })
-    if ($filled.Count -eq $texts.Count) { return @{ text=$raw; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null; lines=$null } }
+    if ($filled.Count -eq $texts.Count -and -not $markCount) { return @{ text=$raw; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null; lines=$null } }
     # How the field's text lines up with the paragraphs, when it does: Chromium writes no line break for an empty
     # paragraph in the middle, and one for each at the end (once a final one is off, the mirror taking it away).
     $joined = $filled -join "`n"
@@ -193,10 +285,18 @@ function Get-ParagraphView($facts) {
     }
     return @{
         text=$view.ToString()
-        start=(& $position $facts.start $startParagraph $facts.startOffset)
-        end=(& $position $facts.end $endParagraph $facts.endOffset)
+        start=(& $position $facts.start $startParagraph $startOffset)
+        end=(& $position $facts.end $endParagraph $endOffset)
         rawAt=$(if ($fits) { $map } else { $null })
         lines=$lineStarts.ToArray()
+        offsets=$offsets.ToArray()
+        objects=$(
+            $all = New-Object 'System.Collections.Generic.List[object]'
+            for ($index = 0; $index -lt $texts.Count; $index++) {
+                foreach ($range in $localObjects[$index]) { $all.Add(@(($lineStarts[$index] + $range[0]), ($lineStarts[$index] + $range[1]))) }
+            }
+            ,$all.ToArray()
+        )
     }
 }
 
@@ -273,4 +373,4 @@ function Get-FieldKind($facts) {
     return 'text'
 }
 
-Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Get-ParagraphView, Get-InlineObjectView, Expand-ObjectEdit, Get-CaretSteps, Test-InlineCompletion, Get-EditOutcome
+Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Get-ParagraphView, Get-ObjectDisplay, Get-InlineObjectView, Expand-ObjectEdit, Get-CaretSteps, Test-InlineCompletion, Get-EditOutcome
