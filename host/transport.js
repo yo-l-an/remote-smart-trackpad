@@ -154,6 +154,10 @@ export function createTransport({
                         if (!allowedActions.has(message.action))
                             return client.send({ type: 'ack', id: message.id, ok: false, error: 'Unknown command' });
                         const data = message.data || {};
+                        // Half an emoji (a lone surrogate) would reach the bridge as "�", typed as a character of its
+                        // own: refused.
+                        if (typeof data.text === 'string' && !data.text.isWellFormed())
+                            return client.send({ type: 'ack', id: message.id, ok: false, error: 'Broken character' });
                         if (message.action === 'release' && clients.size > 1) {
                             await releaseHeld(client);
                             return client.send({ type: 'ack', id: message.id, ok: true });

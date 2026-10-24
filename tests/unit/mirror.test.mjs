@@ -37,6 +37,18 @@ test('opening mirrors the complete field; PC focus changes replace it without cl
     assert.equal(h.changes.at(-1).text, 'Other field');
     assert.equal(h.changes.at(-1).open, true);
 });
+test('typing replayed on the PC text counts whole characters: an emoji is never cut in two', async () => {
+    const h = harness();
+    h.mirror.open();
+    await h.reply(snapshot('a😬😂😂'));
+    // The phone erased a line break and two emojis (5 UTF-16 units, 3 characters) in the text it had, which the PC's
+    // replaced meanwhile: the 3 characters before the PC's caret go, not 5 units (half of 😬 with them).
+    h.mirror.input('x', 1, 1, 'x\n😂😂');
+    const state = h.changes.at(-1);
+    assert.equal(state.text, 'a');
+    assert.ok(state.text.isWellFormed());
+    assert.ok(h.requests.every(({ data }) => typeof data?.text !== 'string' || data.text.isWellFormed()));
+});
 test('IME holds uncommitted input; a field changed meanwhile rejects it without replaying it', async () => {
     const h = harness();
     h.mirror.open();

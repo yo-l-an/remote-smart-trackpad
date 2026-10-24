@@ -1,5 +1,9 @@
 import { nextReplacementStep, replacementFor } from './text-operations.js';
 
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+/** A text's characters as the phone shows them: an emoji, with its skin tone or its joined parts, is one. */
+const characters = (text) => Array.from(segmenter.segment(text), ({ segment }) => segment);
+
 /**
  * The caret or selection around whole inline objects (objects: [start, end] of each, from the PC: an emoji image, shown
  * as its emoji or a custom one by its name): the PC's caret stops only at their edges. A caret never lands inside one:
@@ -77,22 +81,26 @@ export function createMirror(
      * The typing that turned `before` into `typed` (text and caret), replayed at the caret of `target`, as the keyboard
      * would have typed it there: the characters removed before the caret and those inserted. Null when there is none,
      * or the change is not typing that ends at the caret (an autocorrection of an earlier word). `backspaces`: how many
-     * of the removed characters reach past the start of the field (Backspace in an empty field).
+     * of the removed characters reach past the start of the field (Backspace in an empty field). Characters are
+     * counted whole (an emoji is one, whatever its length): counted in UTF-16 units, a line of emojis and its line
+     * break erased at another caret would cut an emoji in two.
      */
     function replay(before, typed, target) {
         if (!target.readable || typed.text === before) return null;
         const change = replacementFor(before, typed.text, typed.selectionStart);
         if (change.start + change.text.length !== typed.selectionStart) return null;
-        const removed = change.end - change.start;
+        const removed = characters(before.slice(change.start, change.end)).length;
         // A selection on the PC (a completion) goes first, like typing over it.
         const selected = target.selectionEnd > target.selectionStart;
-        const from = Math.max(0, target.selectionStart - (selected ? Math.max(0, removed - 1) : removed));
+        const behind = characters(target.text.slice(0, target.selectionStart));
+        const back = Math.min(behind.length, selected ? Math.max(0, removed - 1) : removed);
+        const from = target.selectionStart - behind.slice(behind.length - back).join('').length;
         const caret = from + change.text.length;
         return {
             text: target.text.slice(0, from) + change.text + target.text.slice(target.selectionEnd),
             selectionStart: caret,
             selectionEnd: caret,
-            backspaces: selected ? 0 : Math.max(0, removed - target.selectionStart),
+            backspaces: selected ? 0 : Math.max(0, removed - behind.length),
         };
     }
     /**
@@ -119,6 +127,9 @@ export function createMirror(
             typedOverSelection(confirmed, local)
             ?? nextReplacementStep(confirmed.text, local.text, local.selectionStart);
         const final = step.resultText === local.text;
+        // Half an emoji (a lone surrogate) would reach the PC as "�", a character of its own: never sent, the PC's
+        // text stays.
+        if (!step.text.isWellFormed() || !local.text.isWellFormed()) return adopt(confirmed);
         busy = true;
         dirty = false;
         try {
