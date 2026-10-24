@@ -42,23 +42,66 @@ function mountTiptap(id, host) {
     };
 }
 
-// Quill, as Slack's message box (class ql-editor): its text ends with a line break of its own, not the field's.
+// Slate as Discord sets it up: paragraphs of text and inline void emojis, an image with the emoji's name as its alt.
+const emojiPattern = /(:[a-z0-9_+-]+:)/;
+const image =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23fc0'/%3E%3C/svg%3E";
+
+// Quill, as Slack's message box (class ql-editor): its text ends with a line break of its own, not the field's. An
+// emoji is an image of its own, labelled as Slack labels it ("joy emoji"); Quill counts it as one character.
+const { EmbedBlot } = Quill.import('parchment');
+class SlackEmoji extends EmbedBlot {
+    static blotName = 'emoji';
+    static tagName = 'img';
+    static className = 'emoji';
+    static create(name) {
+        const node = super.create();
+        Object.assign(node, { src: image, alt: name, width: 22, height: 22 });
+        node.setAttribute('aria-label', `${name.slice(1, -1).replaceAll('_', ' ')} emoji`);
+        return node;
+    }
+    static value(node) {
+        return node.getAttribute('alt');
+    }
+}
+Quill.register(SlackEmoji);
 function mountQuill(id, host) {
     const editor = new Quill(host);
     editors[id] = {
         element: () => editor.root,
         clear: () => editor.setText(''),
-        value: () => editor.getText().replace(/\n$/, ''),
+        value: () =>
+            editor
+                .getContents()
+                .ops.map(({ insert }) => (typeof insert === 'string' ? insert : insert.emoji))
+                .join('')
+                .replace(/\n$/, ''),
         setContent: (lines) => {
-            editor.setText(lines.join('\n') + '\n');
+            const ops = lines
+                .join('\n')
+                .concat('\n')
+                .split(emojiPattern)
+                .filter(Boolean)
+                .map((piece) => ({ insert: emojiPattern.test(piece) ? { emoji: piece } : piece }));
+            editor.setContents(ops);
             editor.setSelection(editor.getLength() - 1);
         },
-        caret: (offset) => editor.setSelection(offset),
+        // value()'s text counts an emoji by its name, Quill as one character.
+        caret: (offset) => {
+            let left = offset,
+                index = 0;
+            for (const { insert } of editor.getContents().ops) {
+                const emoji = typeof insert !== 'string';
+                const size = emoji ? insert.emoji.length : insert.length;
+                if (!emoji && left <= size) return editor.setSelection(index + left);
+                if (emoji && left < size) return editor.setSelection(index);
+                left -= size;
+                index += emoji ? 1 : size;
+            }
+            editor.setSelection(index);
+        },
     };
 }
-
-// Slate as Discord sets it up: paragraphs of text and inline void emojis, an image with the emoji's name as its alt.
-const emojiPattern = /(:[a-z0-9_+-]+:)/;
 const toNodes = (lines) =>
     lines.map((line) => ({
         type: 'paragraph',
@@ -73,8 +116,6 @@ const textOf = (node) =>
     node.type === 'emoji' ? node.name
     : 'text' in node ? node.text
     : node.children.map(textOf).join('');
-const image =
-    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23fc0'/%3E%3C/svg%3E";
 
 function SlateField({ id }) {
     const editor = useMemo(() => {
@@ -119,8 +160,8 @@ function SlateField({ id }) {
     };
     const renderElement = ({ attributes, children, element }) =>
         element.type === 'emoji' ?
-            // Discord's markup (tests/fixtures/placeholders.html): the image in a container of its own, Slate's
-            // spacer beside it.
+            // Discord's markup (tests/fixtures/placeholders.html, and as its app reads): the image in a container of
+            // its own, its name in a visually hidden text, Slate's spacer beside it.
             h(
                 'span',
                 { ...attributes, contentEditable: false },
@@ -135,6 +176,11 @@ function SlateField({ id }) {
                         height: 22,
                         draggable: false,
                     })
+                ),
+                h(
+                    'span',
+                    { style: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' } },
+                    element.name
                 ),
                 children
             )

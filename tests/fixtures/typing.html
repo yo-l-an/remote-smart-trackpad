@@ -219,15 +219,17 @@
             data-pc-caret
             data-lines
             data-rich
+            data-emoji
             data-typed="hello world"
             data-expected="hello world"
         >
-            <label>Quill, as Slack's message box</label>
+            <label>Quill with emoji images, as Slack's message box</label>
             <div class="editor" data-field data-editor="quill"></div>
         </section>
         <section
             data-case="slate"
             data-edge
+            data-skip="emoji-between"
             data-caret
             data-pc-caret
             data-lines
@@ -236,6 +238,8 @@
             data-typed="hello world"
             data-expected="hello world"
         >
+            <!-- emoji-between skipped: this slate-react renders no caret stop between two emojis side by side, where
+                 Discord's has an empty text of its own (typing there checked in Discord itself). -->
             <label>Slate with emoji images, as Discord's message box</label>
             <div class="editor" data-field data-editor="slate"></div>
         </section>
@@ -446,6 +450,8 @@
                         edge:
                             'edge' in section.dataset
                             && (section.dataset.edge ? section.dataset.edge.split(' ') : true),
+                        // Scenarios it cannot stand for, though it has what they need (data-skip).
+                        skip: section.dataset.skip?.split(' ') ?? [],
                         emoji: 'emoji' in section.dataset,
                         lines: 'lines' in section.dataset,
                         pcCaret: 'pcCaret' in section.dataset,

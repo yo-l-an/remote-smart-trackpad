@@ -42,6 +42,8 @@ const option = (name) =>
         .split(',');
 const quick = process.argv.includes('--quick');
 // The quick run's edge tier: Chrome's fields that broke the most, each a kind of its own.
+// The emoji each inline emoji image's name stands for, as the host shows it.
+const emojiNames = JSON.parse(await readFile(path.join(root, 'host/windows/emoji-names.json'), 'utf8'));
 const quickEdge = ['textarea', 'tiptap', 'quill', 'slate', 'code-line', 'delayed', 'complete'];
 const targets =
     option('target')
@@ -606,35 +608,84 @@ const scenarios = {
         expected: 'hello world',
         whole: true,
     },
-    // Inline emoji images (Discord): typing after one, two side by side with a space, Backspace erasing one whole.
-    // Chrome names no emoji image (Discord's app does): the phone shows each as a dotted square here, so what names
-    // do (a tap selects one, the space bar's cursor crosses it) is left to the unit tests (coverObjects).
-    'emoji-after': {
+    // Inline emoji images (Discord's Slate, Slack's Quill): the phone shows each as the emoji its name stands for, a
+    // custom one by its name (":partyparrot:"), several side by side or apart, over several lines; the caret steps
+    // over each whole; typing goes between two; Backspace and a selection take each whole, across lines too; a tap
+    // in a custom one's name selects it.
+    'emoji-row': {
         needs: 'emoji',
         steps: [
-            ['content', ['hi :smile:']],
+            ['content', ['a :joy::joy: b :heart:', '', ':partyparrot: end :smile:']],
             ['tap', 'end'],
-            ['type', ' there'],
+            ['type', '!'],
         ],
-        expected: 'hi :smile: there',
+        expected: 'a :joy::joy: b :heart:\n\n:partyparrot: end :smile:!',
     },
-    'emoji-pair': {
+    'emoji-between': {
         needs: 'emoji',
         steps: [
-            ['content', [':smile: :wave:']],
-            ['tap', 'end'],
-            ['type', ' ok'],
+            ['content', ['a :joy::joy: b']],
+            ['tap', 4],
+            ['type', 'X'],
         ],
-        expected: ':smile: :wave: ok',
+        expected: 'a :joy:X:joy: b',
+    },
+    'emoji-drag': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['a :joy: b']],
+            ['tap', 0],
+            ['drag', 3, { gap: 80 }],
+            ['type', 'X'],
+        ],
+        expected: 'a :joy:X b',
     },
     'emoji-backspace': {
         needs: 'emoji',
         steps: [
-            ['content', ['ok :smile:']],
+            ['content', ['ok :joy: :smile:']],
             ['tap', 'end'],
+            ['key', 'Backspace'],
+            ['key', 'Backspace'],
             ['key', 'Backspace'],
         ],
         expected: 'ok ',
+    },
+    'emoji-select': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['a :joy: b :smile: c']],
+            ['select', 2, 9],
+            ['type', 'X'],
+        ],
+        expected: 'a X c',
+    },
+    'emoji-select-lines': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['x :joy:', ':smile: y']],
+            ['select', 2, 7],
+            ['type', 'Z'],
+        ],
+        expected: 'x Z y',
+    },
+    'emoji-custom-tap': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['go :partyparrot: now']],
+            ['tap', 6],
+            ['type', 'yo'],
+        ],
+        expected: 'go yo now',
+    },
+    'emoji-type': {
+        needs: 'emoji',
+        steps: [
+            ['content', ['hi']],
+            ['tap', 'end'],
+            ['commit', ' 😂'],
+        ],
+        expected: 'hi 😂',
     },
 };
 
@@ -679,7 +730,7 @@ function scenariosFor(entry, target) {
     return Object.entries(scenarios)
         .filter(([name, scenario]) =>
             name === 'smoke' ? tiers.includes('smoke')
-            : !edge || !entry.edge ? false
+            : !edge || !entry.edge || entry.skip?.includes(name) ? false
             : entry.edge === true ? !scenario.listed && [scenario.needs ?? []].flat().every(has)
             : entry.edge.includes(name) && [scenario.needs ?? []].flat().every(has)
         )
@@ -711,8 +762,9 @@ async function runCase({
     const check = typing && entry.check ? entry.check : (got) => got === expected;
     // The phone shows the PC's text, or what was typed blind: all of it, or its end once the focus moved on (a code's
     // next box). Moving the caret or deleting leaves only part of the text blind: any part of the final text.
-    // Chrome names no emoji image: the phone shows a dotted square for one, Slate's anchor beside it.
-    const plain = (text) => (entry.emoji ? text.replace(/:[a-z0-9_+-]+:/g, '⬚').replace(/﻿*⬚﻿*/g, '⬚') : text);
+    // An emoji image shows on the phone as the emoji its name stands for (host/windows/emoji-names.json), else by name.
+    const plain = (text) =>
+        entry.emoji ? text.replace(/:([a-z0-9_+-]+):/g, (name, code) => emojiNames[code] ?? name) : text;
     const echoes = ({ text, blind }, got) =>
         blind ?
             scenario.whole ? text === expected
@@ -815,7 +867,7 @@ async function runCase({
     if (!result.pass || process.argv.includes('--verbose')) console.log(`       ${result.sent}`);
     // What the phone was shown, timed from the end of the run backwards.
     if (!result.echo || process.argv.includes('--trace'))
-        for (const { at, ...render } of phoneState.renders)
+        for (const { at, ...render } of phoneState.renders ?? [])
             console.log(`         ${Math.round(at - phoneState.now)}ms ${JSON.stringify(render)}`);
 }
 

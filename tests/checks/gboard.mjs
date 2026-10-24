@@ -129,14 +129,18 @@ export function createGboard({ page, evaluate, wait }) {
             await select(position === 'end' ? (await text()).length : position);
             await wait(150);
         },
-        /** The space bar's cursor: `steps` characters (negative: left), `per` characters a step, `gap` ms apart. */
+        /** The space bar's cursor: `steps` characters (negative: left), `per` characters a step, `gap` ms apart. Steps count
+         * whole characters (an emoji is one). */
         async drag(steps, { per = 1, gap = 60 } = {}) {
             let left = Math.abs(steps);
             while (left > 0) {
                 const step = Math.min(per, left);
-                await inField(
-                    `const at = field.selectionStart + ${Math.sign(steps) * step}; field.setSelectionRange(at, at);`
-                );
+                // By whole characters, as Android moves it: never inside an emoji.
+                await inField(`
+                    const edges = [0, ...[...new Intl.Segmenter().segment(field.value)].map((part) => part.index + part.segment.length)];
+                    const from = edges.findIndex((edge) => edge >= field.selectionStart);
+                    const at = edges[Math.max(0, Math.min(edges.length - 1, from + ${Math.sign(steps) * step}))];
+                    field.setSelectionRange(at, at);`);
                 left -= step;
                 await wait(gap);
             }
