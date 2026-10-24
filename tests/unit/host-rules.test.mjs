@@ -269,6 +269,28 @@ test('USB dongle: characters typed as keys of the layout', { skip: !windows }, a
     assert.equal(await typing('a', true), `t ${usage} ${modifiers ^ 2}`);
 });
 
+test(
+    'ProseMirror blank lines: rebuilt from the paragraphs Chromium leaves out of the text',
+    { skip: !windows },
+    async () => {
+        const view = (text, paragraphs, start, caretParagraph = -1, end = start) =>
+            ask('Get-ParagraphView', { text, start, end, paragraphs, caretParagraph });
+        // Read from Claude Desktop's prompt box: "a", blank, "b", blank, "zz".
+        const claude = await view('a\nb\nzz', ['a', '\n', 'b', '\n', 'zz'], 4, 4);
+        assert.equal(claude.text, 'a\n\nb\n\nzz');
+        assert.equal(claude.start, 6);
+        assert.deepEqual(claude.rawAt, [0, 1, 1, 2, 3, 3, 4, 5, 6]);
+        // A caret on a blank line stands on it; without its paragraph, a position goes to the first one at or after it.
+        assert.equal((await view('a\nb\nzz', ['a', '\n', 'b', '\n', 'zz'], 2, 1)).start, 2);
+        assert.equal((await view('a\nb\nzz', ['a', '\n', 'b', '\n', 'zz'], 2)).start, 3);
+        assert.equal((await view('a', ['a', '\n'], 1, 1)).text, 'a\n');
+        assert.equal((await view('a', ['\n', 'a'], 0, 1)).start, 1);
+        // Nothing missing, or paragraphs that do not make up the text (a list holds lines of its own): left as it is.
+        assert.equal((await view('a\nb', ['a', 'b'], 0)).rawAt, null);
+        assert.equal((await view('a\nb\nc', ['a', '\n', 'b\nc\nd'], 0)).rawAt, null);
+    }
+);
+
 test('inline objects: shown by their names, one caret step each', { skip: !windows }, async () => {
     // The embedded-object marker, the editor's zero-width anchor, the dotted square shown without a name.
     const [marker, anchor, square] = [0xfffc, 0xfeff, 0x2b1a].map((code) => String.fromCodePoint(code));

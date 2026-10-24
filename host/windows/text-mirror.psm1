@@ -98,6 +98,39 @@ function Get-ElementKind($element, [string]$field) {
     return $kind
 }
 
+<#
+A ProseMirror field's paragraphs, for Get-ParagraphView: texts (each paragraph's, a lone line break for an empty one)
+and caret (the paragraph holding a collapsed caret, else -1). Null when nothing can be missing: as many paragraphs as
+the text has lines, or over 200 (reading each costs, on every read).
+#>
+function Get-Paragraphs($element, $pattern, [string]$text, $selection, [bool]$collapsed) {
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    $children = New-Object 'System.Collections.Generic.List[object]'
+    for ($child = $walker.GetFirstChild($element); $null -ne $child; $child = $walker.GetNextSibling($child)) {
+        $children.Add($child)
+        if ($children.Count -gt 200) { return $null }
+    }
+    if ($children.Count -le $text.Split("`n").Count) { return $null }
+    # The caret's paragraph: the element enclosing it, or the paragraph that element sits in.
+    $holders = @()
+    if ($collapsed) {
+        try {
+            $holder = $selection.GetEnclosingElement()
+            for ($depth = 0; $null -ne $holder -and $depth -lt 6 -and -not $holder.Equals($element); $depth++) {
+                $holders += $holder
+                $holder = $walker.GetParent($holder)
+            }
+        } catch {}
+    }
+    $texts = New-Object 'System.Collections.Generic.List[string]'
+    $caret = -1
+    for ($index = 0; $index -lt $children.Count; $index++) {
+        $texts.Add((Normalize-MirrorText ($pattern.RangeFromChild($children[$index]).GetText(262145))))
+        if ($caret -lt 0 -and @($holders | Where-Object { $_.Equals($children[$index]) }).Count) { $caret = $index }
+    }
+    return @{ texts=$texts.ToArray(); caret=$caret }
+}
+
 function Read-MirrorOnce {
     $element = [System.Windows.Automation.AutomationElement]::FocusedElement
     # Which UI element has the focus, readable or not: the phone keeps what it typed blind while this stays the same.
@@ -159,10 +192,19 @@ function Read-MirrorOnce {
     $phantomBreak = $framework -eq 'Chrome' -and -not $resolved.native -and $text.EndsWith("`n") -and (Test-PhantomBreak $element)
     $repaired = Repair-MirrorText @{ framework=$framework; className=$element.Current.ClassName; native=$resolved.native; text=$text; start=$start; end=$end; phantomBreak=$phantomBreak }
     $text = $repaired.text; $start = $repaired.start; $end = $repaired.end
+    $objects = $null
+    # ProseMirror (Claude Desktop, tiptap): its blank lines come back from its paragraphs (Get-ParagraphView).
+    if ($framework -eq 'Chrome' -and -not $resolved.native -and $element.Current.ClassName -match '(^|\s)ProseMirror(\s|$)') {
+        $paragraphs = Get-Paragraphs $element $pattern $text $ranges[0] ($start -eq $end)
+        if ($null -ne $paragraphs) {
+            $view = Get-ParagraphView @{ text=$text; start=$start; end=$end; paragraphs=$paragraphs.texts; caretParagraph=$paragraphs.caret }
+            if ($null -ne $view.rawAt) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$null } }
+            $text = $view.text; $start = $view.start; $end = $view.end
+        }
+    }
     # Inline objects (Discord's emoji images) by their names, one character each for the caret; positions on the
     # phone go back through rawAt, and the phone gets where each object stands.
-    $objects = $null
-    if ($framework -eq 'Chrome' -and -not $resolved.native) {
+    if ($null -eq $objects -and $framework -eq 'Chrome' -and -not $resolved.native) {
         $view = Get-InlineObjectView @{ text=$text; start=$start; end=$end }
         if ($null -ne $view.rawAt) { $objects = @{ text=$view.text; rawAt=$view.rawAt; raw=$text; ranges=$view.objects } }
         $text = $view.text; $start = $view.start; $end = $view.end

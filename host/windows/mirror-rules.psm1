@@ -130,6 +130,52 @@ function Get-InlineObjectView($facts) {
 }
 
 <#
+Blank lines in ProseMirror fields (Claude Desktop, tiptap): Chromium leaves an empty paragraph out of the field's
+text, though it stays an element of its own. The text is rebuilt from the paragraphs, each on its line. Facts: text
+(the field's), start, end, paragraphs (each paragraph's text, a lone line break for an empty one) and caretParagraph
+(the paragraph holding a caret, -1 for a selection or when unknown). Answers text, start and end as the phone gets
+them, and rawAt as Get-InlineObjectView does; rawAt is null, and the text left as it is, unless the filled
+paragraphs make up the field's text exactly (a list holds several lines in one element) and one is empty. A caret
+in a known paragraph stands on its line; elsewhere a position goes to the first one at or after it.
+#>
+function Get-ParagraphView($facts) {
+    $raw = [string]$facts.text
+    $texts = @(@($facts.paragraphs) | ForEach-Object { if ([string]$_ -ceq "`n") { '' } else { [string]$_ } })
+    $filled = @($texts | Where-Object { $_.Length })
+    if ($filled.Count -eq $texts.Count -or ($filled -join "`n") -cne $raw) {
+        return @{ text=$raw; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null }
+    }
+    $view = New-Object System.Text.StringBuilder
+    $rawAt = New-Object 'System.Collections.Generic.List[int]'
+    $lineStarts = New-Object 'System.Collections.Generic.List[int]'
+    $rawStarts = New-Object 'System.Collections.Generic.List[int]'
+    $at = 0; $seenFilled = $false
+    for ($index = 0; $index -lt $texts.Count; $index++) {
+        if ($index) {
+            # The field's own line break sits right before a filled paragraph that follows another; the others are
+            # the empty paragraphs' lines, which the field's text lacks.
+            $rawAt.Add($at); [void]$view.Append("`n")
+            if ($seenFilled -and $texts[$index].Length) { $at++ }
+        }
+        $lineStarts.Add($view.Length); $rawStarts.Add($at)
+        foreach ($character in $texts[$index].ToCharArray()) { $rawAt.Add($at); [void]$view.Append($character); $at++ }
+        if ($texts[$index].Length) { $seenFilled = $true }
+    }
+    $rawAt.Add($at)
+    $map = $rawAt.ToArray()
+    $paragraph = [int]$facts.caretParagraph
+    $position = {
+        param([int]$raw)
+        if ($paragraph -ge 0 -and $paragraph -lt $texts.Count) {
+            return $lineStarts[$paragraph] + [Math]::Max(0, [Math]::Min($texts[$paragraph].Length, $raw - $rawStarts[$paragraph]))
+        }
+        for ($index = 0; $index -lt $map.Length; $index++) { if ($map[$index] -ge $raw) { return $index } }
+        return $map.Length - 1
+    }
+    return @{ text=$view.ToString(); start=(& $position $facts.start); end=(& $position $facts.end); rawAt=$map }
+}
+
+<#
 An edit from the phone that cuts into an inline object (Backspace on the end of an emoji's name) takes the whole
 object, as one key does on the PC. Facts: start, end, objects (from Get-InlineObjectView). Answers start and end.
 #>
@@ -202,4 +248,4 @@ function Get-FieldKind($facts) {
     return 'text'
 }
 
-Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Get-InlineObjectView, Expand-ObjectEdit, Get-CaretSteps, Test-InlineCompletion, Get-EditOutcome
+Export-ModuleMember -Function Normalize-LineEndings, Normalize-MirrorText, Get-ElementIndex, Get-FieldVerdict, Get-FieldKind, Repair-MirrorText, Get-ParagraphView, Get-InlineObjectView, Expand-ObjectEdit, Get-CaretSteps, Test-InlineCompletion, Get-EditOutcome
