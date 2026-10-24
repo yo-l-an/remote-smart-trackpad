@@ -219,9 +219,13 @@ class TextEditor extends HTMLElement {
             && !this.view.blind
             && shown(field.selectionStart) === start
             && shown(field.selectionEnd) === end;
+        // Writing the value or the selection scrolls the field to show the caret, its last line flush with the bottom
+        // edge: a field scrolled to its end, caret at the end, stays at its end, its bottom padding included.
+        const atEnd = field.scrollTop + field.clientHeight >= field.scrollHeight - 1;
         if (field.value !== value) field.value = value;
         if (!same && (field.selectionStart !== start + lead || field.selectionEnd !== end + lead))
             field.setSelectionRange(start + lead, end + lead);
+        if (atEnd && end === text.length) field.scrollTop = field.scrollHeight;
         this.written = value;
         this.writtenLead = lead;
         this.writtenPads = value.length - text.length;
