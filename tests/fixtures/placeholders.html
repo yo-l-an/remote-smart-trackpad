@@ -458,6 +458,16 @@ second</textarea>
                 <p>zz</p>
             </div>
         </section>
+        <section data-case="prosemirror-trailing-blank" data-kind="content" data-expected="a&#10;&#10;b&#10;&#10;">
+            <h2>ProseMirror ending with empty paragraphs</h2>
+            <div data-field contenteditable class="tiptap ProseMirror" role="textbox">
+                <p>a</p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+                <p>b</p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+                <p><br class="ProseMirror-trailingBreak" /></p>
+            </div>
+        </section>
         <section data-case="rtl-content" data-kind="content" data-expected="שלום עולם">
             <h2>right-to-left text</h2>
             <div data-field contenteditable dir="rtl" class="css-empty" data-placeholder="כתוב הודעה">שלום עולם</div>

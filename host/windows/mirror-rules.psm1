@@ -142,7 +142,15 @@ function Get-ParagraphView($facts) {
     $raw = [string]$facts.text
     $texts = @(@($facts.paragraphs) | ForEach-Object { if ([string]$_ -ceq "`n") { '' } else { [string]$_ } })
     $filled = @($texts | Where-Object { $_.Length })
-    if ($filled.Count -eq $texts.Count -or ($filled -join "`n") -cne $raw) {
+    # Empty paragraphs at the end are the exception: Chromium writes a line break for each (some, once the mirror took
+    # off a final break the caret never reaches). Those breaks follow the filled paragraphs' text.
+    $joined = $filled -join "`n"
+    $lastFilled = -1
+    for ($index = 0; $index -lt $texts.Count; $index++) { if ($texts[$index].Length) { $lastFilled = $index } }
+    $tail = $raw.Length - $joined.Length
+    $fits = $tail -ge 0 -and $raw.StartsWith($joined, [StringComparison]::Ordinal) -and
+        $raw.Substring($joined.Length) -ceq ("`n" * $tail) -and $tail -le $texts.Count - 1 - $lastFilled
+    if ($filled.Count -eq $texts.Count -or -not $fits) {
         return @{ text=$raw; start=[int]$facts.start; end=[int]$facts.end; rawAt=$null }
     }
     $view = New-Object System.Text.StringBuilder
@@ -152,10 +160,12 @@ function Get-ParagraphView($facts) {
     $at = 0; $seenFilled = $false
     for ($index = 0; $index -lt $texts.Count; $index++) {
         if ($index) {
-            # The field's own line break sits right before a filled paragraph that follows another; the others are
-            # the empty paragraphs' lines, which the field's text lacks.
+            # The field's own line break sits right before a filled paragraph that follows another, and before the
+            # first empty paragraphs at the end (one each); the others are the empty paragraphs' lines, which the
+            # field's text lacks.
             $rawAt.Add($at); [void]$view.Append("`n")
             if ($seenFilled -and $texts[$index].Length) { $at++ }
+            elseif ($index -gt $lastFilled -and $tail) { $at++; $tail-- }
         }
         $lineStarts.Add($view.Length); $rawStarts.Add($at)
         foreach ($character in $texts[$index].ToCharArray()) { $rawAt.Add($at); [void]$view.Append($character); $at++ }

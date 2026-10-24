@@ -285,6 +285,12 @@ test(
         assert.equal((await view('a\nb\nzz', ['a', '\n', 'b', '\n', 'zz'], 2)).start, 3);
         assert.equal((await view('a', ['a', '\n'], 1, 1)).text, 'a\n');
         assert.equal((await view('a', ['\n', 'a'], 0, 1)).start, 1);
+        // Blank lines at the end: Chromium writes a break for each (or one less, the mirror taking off a final one).
+        const ending = ['a', '\n', 'b', '\n', '\n'];
+        const both = await view('a\nb\n\n', ending, 5, 4);
+        assert.deepEqual([both.text, both.start], ['a\n\nb\n\n', 6]);
+        assert.equal((await view('a\nb\n', ending, 4, 4)).text, 'a\n\nb\n\n');
+        assert.equal((await view('a\nb\n', ['a', '\n', 'b', '\n'], 4, 3)).text, 'a\n\nb\n');
         // Nothing missing, or paragraphs that do not make up the text (a list holds lines of its own): left as it is.
         assert.equal((await view('a\nb', ['a', 'b'], 0)).rawAt, null);
         assert.equal((await view('a\nb\nc', ['a', '\n', 'b\nc\nd'], 0)).rawAt, null);
